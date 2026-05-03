@@ -120,10 +120,11 @@ class FedAvgTrainer(BaseFederated):
                 update, stat = client.plugin_feature_distill(payload)
                 local_updates.append(update)
                 print("Distill: {:>2d} | CID: {: >3d} ({:>2d}/{:>2d})| "
-                      "Loss {:>.4f} | L_fd {:>.4f} | Rho {:>.4f} | "
+                      "Loss {:>.4f} | L_fd {:>.4f} | Recon {:>.4f} | Rho {:>.4f} | "
                       "xs_norm {:>.4f} | Acc {:>5.2f}% | Time: {:>.2f}s ".format(
                        round_i, client.id, i, len(selected_clients),
                        stat['loss'], stat.get('fd_loss', 0.0),
+                       stat.get('recon_loss', 0.0),
                        stat.get('rho_penalty', 0.0), stat.get('xs_norm', 0.0),
                        stat['acc'] * 100, stat['time'], ))
             self.server_plugin.aggregate_generator_states(local_updates)

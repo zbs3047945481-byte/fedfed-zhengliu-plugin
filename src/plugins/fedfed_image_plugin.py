@@ -18,16 +18,13 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             options.get('fedfed_generator_type', 'beta_vae'),
             self.input_channels,
             latent_channels=int(options.get('fedfed_vae_latent_channels', 64)),
+            z_dim=int(options.get('fedfed_vae_z_dim', 2048)),
         ).to(device)
         self.model_optimizer = torch.optim.Adam(
             self.model.parameters(),
             lr=options.get('lr', 0.001),
         )
-        self.distill_optimizer = torch.optim.Adam(
-            list(self.distill_classifier.parameters()) + list(self.generator.parameters()),
-            lr=options.get('lr', 0.001),
-            weight_decay=float(options.get('fedfed_generator_weight_decay', 0.0)),
-        )
+        self.distill_optimizer = self._build_distill_optimizer()
         self.shared_x = None
         self.shared_y = None
         self.current_round = 0
@@ -63,9 +60,24 @@ class FedFedImageClientPlugin(BaseClientPlugin):
                     state[key] = value.to(device)
 
     def _set_optimizer_lr(self, learning_rate):
-        for optimizer in (self.model_optimizer, self.distill_optimizer):
-            for group in optimizer.param_groups:
-                group['lr'] = learning_rate
+        for group in self.model_optimizer.param_groups:
+            group['lr'] = learning_rate
+        for group in self.distill_optimizer.param_groups:
+            group['lr'] = float(self.options.get('fedfed_distill_lr', learning_rate))
+
+    def _build_distill_optimizer(self):
+        params = list(self.distill_classifier.parameters()) + list(self.generator.parameters())
+        lr = float(self.options.get('fedfed_distill_lr', self.options.get('lr', 0.001)))
+        weight_decay = float(self.options.get(
+            'fedfed_distill_weight_decay',
+            self.options.get('fedfed_generator_weight_decay', 0.0),
+        ))
+        optimizer_name = str(self.options.get('fedfed_distill_optimizer', 'adamw')).lower()
+        if optimizer_name == 'sgd':
+            return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=weight_decay)
+        if optimizer_name == 'adam':
+            return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
+        return torch.optim.AdamW(params, lr=lr, betas=(0.9, 0.999), weight_decay=weight_decay)
 
     def on_round_start(self, learning_rate, server_payload):
         self._set_optimizer_lr(learning_rate)
@@ -129,6 +141,32 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         x_budget = rho * x.flatten(1).norm(p=2, dim=1).detach()
         return F.relu(xs_norm - x_budget).pow(2).mean()
 
+    def _distill_objective(self, X, y):
+        xs_raw = self._raw_sensitive_feature(X)
+        robust = X - xs_raw
+        xs = self._clip_sensitive_feature(X, xs_raw)
+        pred_sensitive = self.distill_classifier(xs)
+        loss_fd = F.cross_entropy(pred_sensitive, y)
+        loss_recon = F.mse_loss(robust, X)
+        pred_raw = self.distill_classifier(X)
+        loss_x_ce = F.cross_entropy(pred_raw, y)
+        rho_penalty = self._rho_violation(X, xs_raw)
+        kl_loss = self.generator.last_kl
+        loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
+        loss = loss + float(self.options.get('fedfed_lambda_recon', 0.0)) * loss_recon
+        loss = loss + float(self.options.get('fedfed_lambda_x_ce', 0.0)) * loss_x_ce
+        loss = loss + float(self.options.get('fedfed_lambda_rho', 10.0)) * rho_penalty
+        if kl_loss is not None:
+            loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+        return pred_sensitive, loss, {
+            'fd_loss': loss_fd,
+            'recon_loss': loss_recon,
+            'x_ce_loss': loss_x_ce,
+            'rho_penalty': rho_penalty,
+            'xs_norm': xs.flatten(1).norm(p=2, dim=1).mean(),
+            'kl_loss': kl_loss if kl_loss is not None else xs.new_tensor(0.0),
+        }
+
     def _sample_shared_batch(self, batch_size):
         if self.shared_x is None or self.shared_y is None or len(self.shared_y) == 0:
             return None, None
@@ -171,24 +209,22 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         )
         if use_online_distill:
             self.distill_optimizer.zero_grad()
-            xs_raw = self._raw_sensitive_feature(X)
-            xs = self._clip_sensitive_feature(X, xs_raw)
-            pred_sensitive = self.distill_classifier(xs)
-            loss_fd = F.cross_entropy(pred_sensitive, y)
-            rho_penalty = self._rho_violation(X, xs_raw)
-            kl_loss = self.generator.last_kl
-            distill_loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
-            distill_loss = distill_loss + float(self.options.get('fedfed_lambda_rho', 10.0)) * rho_penalty
-            if kl_loss is not None:
-                distill_loss = distill_loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+            _, distill_loss, _ = self._distill_objective(X, y)
             distill_loss.backward()
             self.distill_optimizer.step()
 
         shared_x, shared_y = (None, None) if self.in_warmup else self._sample_shared_batch(X.size(0))
         if shared_x is not None:
-            pred_shared = self.model(shared_x)
-            loss_shared = F.cross_entropy(pred_shared, shared_y)
-            loss = loss + float(self.options.get('fedfed_lambda_shared', 1.0)) * loss_shared
+            if str(self.options.get('fedfed_shared_mix_mode', 'concat')).lower() == 'concat':
+                mixed_x = torch.cat([X, shared_x], dim=0)
+                mixed_y = torch.cat([y, shared_y], dim=0)
+                pred_mixed = self.model(mixed_x)
+                loss = F.cross_entropy(pred_mixed, mixed_y)
+                pred_local = pred_mixed[:X.size(0)]
+            else:
+                pred_shared = self.model(shared_x)
+                loss_shared = F.cross_entropy(pred_shared, shared_y)
+                loss = loss + float(self.options.get('fedfed_lambda_shared', 1.0)) * loss_shared
 
         if not self.in_warmup and not bool(self.options.get('fedfed_two_stage', True)):
             xs = self._sensitive_feature(X)
@@ -205,24 +241,16 @@ class FedFedImageClientPlugin(BaseClientPlugin):
 
     def distill_batch(self, X, y):
         self.distill_optimizer.zero_grad()
-        xs_raw = self._raw_sensitive_feature(X)
-        xs = self._clip_sensitive_feature(X, xs_raw)
-        pred_sensitive = self.distill_classifier(xs)
-        loss_fd = F.cross_entropy(pred_sensitive, y)
-        rho_penalty = self._rho_violation(X, xs_raw)
-        xs_norm = xs.flatten(1).norm(p=2, dim=1).mean()
-        loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
-        loss = loss + float(self.options.get('fedfed_lambda_rho', 10.0)) * rho_penalty
-        kl_loss = self.generator.last_kl
-        if kl_loss is not None:
-            loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+        pred_sensitive, loss, stats = self._distill_objective(X, y)
         loss.backward()
         self.distill_optimizer.step()
         self.last_distill_stats = {
-            'fd_loss': float(loss_fd.detach().item()),
-            'rho_penalty': float(rho_penalty.detach().item()),
-            'xs_norm': float(xs_norm.detach().item()),
-            'kl_loss': float(kl_loss.detach().item()) if kl_loss is not None else 0.0,
+            'fd_loss': float(stats['fd_loss'].detach().item()),
+            'recon_loss': float(stats['recon_loss'].detach().item()),
+            'x_ce_loss': float(stats['x_ce_loss'].detach().item()),
+            'rho_penalty': float(stats['rho_penalty'].detach().item()),
+            'xs_norm': float(stats['xs_norm'].detach().item()),
+            'kl_loss': float(stats['kl_loss'].detach().item()),
         }
         return pred_sensitive, loss.detach()
 

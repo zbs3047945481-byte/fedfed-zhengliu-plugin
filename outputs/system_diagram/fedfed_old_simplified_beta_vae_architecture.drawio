@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-05-03T00:00:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
+<diagram id="old_beta_vae_arch_cn" name="旧版生成器架构图">
+<mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="950" math="0" shadow="0"><root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+<mxCell id="2" value="旧版简化 beta-VAE：主要结构架构图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;fontSize=20;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="40" y="25" width="1380" height="55" as="geometry"/></mxCell>
+<mxCell id="3" value="Encoder 编码器：浅层局部卷积" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#60a5fa;fontSize=16;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;dashed=1;strokeWidth=2;verticalAlign=top;spacingTop=10;" vertex="1" parent="1"><mxGeometry x="40" y="110" width="560" height="300" as="geometry"/></mxCell>
+<mxCell id="4" value="Latent 隐变量：仍是 8x8 局部特征图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#a78bfa;fontSize=16;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;dashed=1;strokeWidth=2;verticalAlign=top;spacingTop=10;" vertex="1" parent="1"><mxGeometry x="640" y="110" width="290" height="300" as="geometry"/></mxCell>
+<mxCell id="5" value="Decoder 解码器：两次反卷积上采样" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#4ade80;fontSize=16;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;dashed=1;strokeWidth=2;verticalAlign=top;spacingTop=10;" vertex="1" parent="1"><mxGeometry x="970" y="110" width="410" height="300" as="geometry"/></mxCell>
+<mxCell id="6" value="输入 x
+3 x 32 x 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="70" y="200" width="120" height="70" as="geometry"/></mxCell>
+<mxCell id="7" value="Conv 3x3
+3 -&gt; 32
+32 x 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="230" y="175" width="135" height="75" as="geometry"/></mxCell>
+<mxCell id="8" value="Conv 3x3 s=2
+32 -&gt; 64
+16 x 16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="395" y="175" width="140" height="75" as="geometry"/></mxCell>
+<mxCell id="9" value="Conv 3x3 s=2
+64 -&gt; 64
+8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="395" y="280" width="140" height="75" as="geometry"/></mxCell>
+<mxCell id="10" value="1x1 Conv
+mu
+64 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="670" y="165" width="105" height="75" as="geometry"/></mxCell>
+<mxCell id="11" value="1x1 Conv
+logvar
+64 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="795" y="165" width="105" height="75" as="geometry"/></mxCell>
+<mxCell id="12" value="采样 z
+64 x 8 x 8
+局部 latent map" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="715" y="285" width="140" height="80" as="geometry"/></mxCell>
+<mxCell id="13" value="Deconv 4x4 s=2
+64 -&gt; 64
+16 x 16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1000" y="175" width="145" height="80" as="geometry"/></mxCell>
+<mxCell id="14" value="Deconv 4x4 s=2
+64 -&gt; 32
+32 x 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1180" y="175" width="145" height="80" as="geometry"/></mxCell>
+<mxCell id="15" value="Conv 3x3 + Sigmoid
+q(x)=x_r
+3 x 32 x 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1180" y="290" width="160" height="85" as="geometry"/></mxCell>
+<mxCell id="16" value="x_s = x - q(x)
+敏感残差" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=15;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="600" y="500" width="220" height="80" as="geometry"/></mxCell>
+<mxCell id="17" value="旧版训练信号较弱
+CE(f(x_s),y) + rho penalty + 弱 KL
+缺少强重构约束和 CE(f(x),y)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f97316;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="880" y="500" width="420" height="90" as="geometry"/></mxCell>
+<mxCell id="18" value="结构直观结论
+浅层局部瓶颈容易让 q(x) 学成模糊图；
+x_s 更像高频残差/边缘/噪声，不一定可迁移。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#ef4444;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="95" y="500" width="420" height="100" as="geometry"/></mxCell>
+<mxCell id="19" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="6" target="7"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="20" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="7" target="8"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="21" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="8" target="9"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="22" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="9" target="10"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="23" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="9" target="11"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="24" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="10" target="12"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="25" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="11" target="12"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="26" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="12" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="27" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="13" target="14"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="28" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="14" target="15"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="29" value="减法" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="15" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="30" value="减法输入" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="6" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="31" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="16" target="17"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel>
+</diagram>
+</mxfile>

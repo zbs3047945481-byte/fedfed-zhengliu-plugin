@@ -48,7 +48,7 @@ def input_options():
     #每个客户端本地训练多少个 epoch
     #比如有1000条数据，把这1000个数据全部用来算一次梯度并更新参数，这完整一轮叫一个epoch
 
-    parser.add_argument('--batch_size', type=int, default=256, help='local train batch size')
+    parser.add_argument('--batch_size', type=int, default=64, help='local train batch size')
     #本地训练 batch size
     #每次梯度更新用多少条样本
     #比如有1000条数据，每轮训练只取100条数据来算梯度并更新参数，这100条数据叫一个batch
@@ -122,7 +122,7 @@ def input_options():
                         help='Generic plugin selector. Prefer this over algorithm-specific toggles for new code.')
     parser.add_argument('--fedfed_input_channels', type=int, default=3,
                         help='Input channels used by image-space FedFed generator.')
-    parser.add_argument('--fedfed_lambda_fd', type=float, default=0.3,
+    parser.add_argument('--fedfed_lambda_fd', type=float, default=2.0,
                         help='Weight of CE(f(x - q(x)), y) for image-space FedFed feature distillation.')
     parser.add_argument('--fedfed_lambda_norm', type=float, default=0.001,
                         help='Weight of the ||x - q(x)||^2 penalty for image-space FedFed.')
@@ -130,9 +130,9 @@ def input_options():
                         help='Weight of CE on server-shared performance-sensitive features.')
     parser.add_argument('--fedfed_two_stage', type=str2bool, default=True,
                         help='Run paper-style FedFed: feature distillation first, then FedAvg over local plus shared features.')
-    parser.add_argument('--fedfed_distill_rounds', type=int, default=30,
+    parser.add_argument('--fedfed_distill_rounds', type=int, default=15,
                         help='Communication rounds used for the feature distillation stage.')
-    parser.add_argument('--fedfed_distill_local_epoch', type=int, default=2,
+    parser.add_argument('--fedfed_distill_local_epoch', type=int, default=1,
                         help='Local epochs used in each feature distillation round.')
     parser.add_argument('--fedfed_rho', type=float, default=0.3,
                         help='Relative norm budget rho for ||x_s|| <= rho * ||x|| in feature distillation.')
@@ -142,15 +142,29 @@ def input_options():
                         help='If false in two-stage mode, formal FedAvg only uses CE(x) and CE(shared_x_s).')
     parser.add_argument('--fedfed_hard_warmup_rounds', type=int, default=10,
                         help='Rounds used only for feature distillation before uploading/using shared x_s.')
-    parser.add_argument('--fedfed_vae_latent_channels', type=int, default=64,
+    parser.add_argument('--fedfed_vae_latent_channels', type=int, default=32,
                         help='Latent channel width of the image-space beta-VAE generator.')
-    parser.add_argument('--fedfed_generator_type', type=str, default='beta_vae',
-                        choices=['beta_vae', 'resnet', 'autoencoder'],
+    parser.add_argument('--fedfed_vae_z_dim', type=int, default=2048,
+                        help='Flattened latent dimension used by the paper beta-VAE generator.')
+    parser.add_argument('--fedfed_generator_type', type=str, default='paper_beta_vae',
+                        choices=['beta_vae', 'paper_beta_vae', 'resnet', 'autoencoder'],
                         help='Image-space generator type used for q(x).')
-    parser.add_argument('--fedfed_lambda_recon', type=float, default=0.05,
+    parser.add_argument('--fedfed_lambda_recon', type=float, default=5.0,
                         help='Weight of reconstruction loss that keeps q(x) close to x.')
-    parser.add_argument('--fedfed_beta_kl', type=float, default=0.001,
+    parser.add_argument('--fedfed_beta_kl', type=float, default=0.005,
                         help='KL weight for the beta-VAE generator.')
+    parser.add_argument('--fedfed_lambda_x_ce', type=float, default=0.4,
+                        help='Weight of CE(f(x), y) used by the paper FedFed VAE objective.')
+    parser.add_argument('--fedfed_distill_optimizer', type=str, default='adamw',
+                        choices=['adamw', 'sgd', 'adam'],
+                        help='Optimizer for the feature distillation classifier and generator.')
+    parser.add_argument('--fedfed_distill_lr', type=float, default=0.001,
+                        help='Learning rate for the feature distillation optimizer.')
+    parser.add_argument('--fedfed_distill_weight_decay', type=float, default=1e-6,
+                        help='Weight decay for the feature distillation optimizer.')
+    parser.add_argument('--fedfed_shared_mix_mode', type=str, default='concat',
+                        choices=['concat', 'loss'],
+                        help='How formal FedAvg consumes D_k and shared D_s: concat approximates D_k union D_s.')
     parser.add_argument('--fedfed_upload_per_class', type=int, default=20,
                         help='Max sensitive samples uploaded by one client for each class in one round.')
     parser.add_argument('--fedfed_upload_per_client', type=int, default=200,
@@ -223,6 +237,12 @@ def input_options():
                         help='Slope of the sigmoid gate used by adaptive anchor control.')
     parser.add_argument('--fedfed_num_classes', type=int, default=10,
                         help='Number of classes used to estimate prototype coverage.')
+    parser.add_argument('--diagnostic_epochs', type=int, default=10,
+                        help='Epochs per classifier in x/x_s/x_r diagnostic evaluation.')
+    parser.add_argument('--diagnostic_train_limit', type=int, default=20000,
+                        help='Max global train samples used by the diagnostic classifiers.')
+    parser.add_argument('--diagnostic_test_limit', type=int, default=10000,
+                        help='Max test samples used by the diagnostic classifiers.')
     
     args = parser.parse_args()
     #从命令行读取参数

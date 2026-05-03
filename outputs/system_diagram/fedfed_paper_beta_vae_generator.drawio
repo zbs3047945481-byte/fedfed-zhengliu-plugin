@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-05-03T00:00:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
+<diagram id="paper_beta_vae_cn" name="论文版 beta-VAE">
+<mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0"><root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+<mxCell id="2" value="论文公开代码版 FedFed beta-VAE 生成器 q(x)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfccb;strokeColor=#65a30d;fontSize=18;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="40" y="30" width="1320" height="60" as="geometry"/></mxCell>
+<mxCell id="3" value="输入 x
+3 x 32 x 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="60" y="150" width="130" height="70" as="geometry"/></mxCell>
+<mxCell id="4" value="encoder_former
+Conv 4x4, stride=2
+3 -&gt; d/2 = 16
+32 -&gt; 16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="240" y="130" width="190" height="110" as="geometry"/></mxCell>
+<mxCell id="5" value="Encoder
+BN + ReLU
+Conv 4x4, stride=2
+16 -&gt; d = 32
+16 -&gt; 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="480" y="130" width="210" height="110" as="geometry"/></mxCell>
+<mxCell id="6" value="ResBlock(d,d) + BN
+32 x 8 x 8
+增强重构路径" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfdbfe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="740" y="105" width="200" height="95" as="geometry"/></mxCell>
+<mxCell id="7" value="ResBlock(d,d)
+32 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfdbfe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="740" y="220" width="200" height="75" as="geometry"/></mxCell>
+<mxCell id="8" value="Flatten
+d*f*f = 32*8*8 = 2048" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="990" y="155" width="180" height="80" as="geometry"/></mxCell>
+<mxCell id="9" value="fc11
+2048 -&gt; z=2048
+mu" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1220" y="105" width="150" height="70" as="geometry"/></mxCell>
+<mxCell id="10" value="fc12
+2048 -&gt; z=2048
+logvar" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1220" y="205" width="150" height="70" as="geometry"/></mxCell>
+<mxCell id="11" value="重参数采样
+全局 VAE latent
+2048 维" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="1040" y="350" width="180" height="90" as="geometry"/></mxCell>
+<mxCell id="12" value="fc21
+2048 -&gt; 2048
+reshape 为 32 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="800" y="350" width="190" height="90" as="geometry"/></mxCell>
+<mxCell id="13" value="Decoder ResBlock
+32 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="570" y="330" width="170" height="70" as="geometry"/></mxCell>
+<mxCell id="14" value="Decoder ResBlock + BN
+32 x 8 x 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="570" y="420" width="170" height="70" as="geometry"/></mxCell>
+<mxCell id="15" value="ConvTranspose 4x4, stride=2
+32 -&gt; 16
+8 -&gt; 16
+BN + LeakyReLU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="320" y="350" width="200" height="100" as="geometry"/></mxCell>
+<mxCell id="16" value="decoder_last
+ConvTranspose 4x4, stride=2
+16 -&gt; 3
+16 -&gt; 32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="90" y="350" width="190" height="100" as="geometry"/></mxCell>
+<mxCell id="17" value="xi_bn + Sigmoid
+输出范围 [0,1]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="90" y="500" width="190" height="70" as="geometry"/></mxCell>
+<mxCell id="18" value="q(x)=x_r
+performance-robust features
+接近原图主体信息" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="330" y="500" width="220" height="80" as="geometry"/></mxCell>
+<mxCell id="19" value="x_s = x - q(x)
+performance-sensitive features
+受 rho 范数约束" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="610" y="500" width="230" height="80" as="geometry"/></mxCell>
+<mxCell id="20" value="辅助分类器 f
+只用于蒸馏阶段
+不是主 FedAvg 模型" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="910" y="500" width="250" height="80" as="geometry"/></mxCell>
+<mxCell id="21" value="论文代码式目标
+5*MSE(q(x),x) + 2*CE(f(x_s),y)
++ 0.005*KL + 0.4*CE(f(x),y) + rho penalty" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="910" y="630" width="360" height="110" as="geometry"/></mxCell>
+<mxCell id="22" value="关键差异：ResBlock + 2048 维全局 latent + 强重构损失，让 q(x) 保留大部分图像内容；小范数残差 x_s 被迫承载类别敏感信息。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#334155;fontSize=12;fontColor=#111827;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="1"><mxGeometry x="60" y="650" width="760" height="90" as="geometry"/></mxCell>
+<mxCell id="23" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="3" target="4"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="5" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="4" target="5"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="24" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="5" target="6"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="25" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="6" target="7"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="26" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="7" target="8"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="27" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="8" target="9"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="28" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="8" target="10"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="29" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="9" target="11"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="30" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="10" target="11"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="31" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="11" target="12"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="32" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="12" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="33" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="13" target="14"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="34" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="14" target="15"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="35" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="15" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="36" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="16" target="17"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="37" value="" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="17" target="18"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="38" value="减法" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="18" target="19"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="39" value="减法输入" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="3" target="19"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="40" value="CE(f(x_s),y)" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="19" target="20"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="41" value="CE(f(x),y)" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="3" target="20"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="42" value="MSE" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="18" target="21"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="43" value="CE" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#475569;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="20" target="21"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel>
+</diagram>
+</mxfile>
