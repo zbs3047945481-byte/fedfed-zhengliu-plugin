@@ -8,10 +8,10 @@ source "${SCRIPT_DIR}/remote_common.sh"
 
 require_remote_config
 
-PREFIX="cifar10_fedfed_image_main_$(date -u +%Y%m%dT%H%M%SZ)"
-ROUND_NUM=150
+PREFIX="default_alpha03_ep5_compare_$(date -u +%Y%m%dT%H%M%SZ)"
+ROUND_NUM=301
 BATCH_SIZE=256
-LOCAL_EPOCH=5
+DATASET_NAME="mnist"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,8 +27,8 @@ while [[ $# -gt 0 ]]; do
       BATCH_SIZE="$2"
       shift 2
       ;;
-    --local-epoch)
-      LOCAL_EPOCH="$2"
+    --dataset-name)
+      DATASET_NAME="$2"
       shift 2
       ;;
     *)
@@ -41,10 +41,10 @@ done
 TMP_DIR="$(make_temp_dir)"
 trap 'cleanup_temp_dir "${TMP_DIR}"' EXIT
 
-QUEUE_FILE="${TMP_DIR}/fedfed_image_main_queue.ps1"
-LAUNCHER_FILE="${TMP_DIR}/fedfed_image_main_queue_launcher.ps1"
-REMOTE_QUEUE_PATH="${REMOTE_Codex_DIR}/fedfed_image_main_queue_${PREFIX}.ps1"
-REMOTE_LAUNCHER_PATH="${REMOTE_Codex_DIR}/fedfed_image_main_queue_launcher_${PREFIX}.ps1"
+QUEUE_FILE="${TMP_DIR}/default_alpha03_ep5_compare_queue.ps1"
+LAUNCHER_FILE="${TMP_DIR}/default_alpha03_ep5_compare_launcher.ps1"
+REMOTE_QUEUE_PATH="${REMOTE_Codex_DIR}/default_alpha03_ep5_compare_queue_${PREFIX}.ps1"
+REMOTE_LAUNCHER_PATH="${REMOTE_Codex_DIR}/default_alpha03_ep5_compare_launcher_${PREFIX}.ps1"
 REMOTE_QUEUE_PS_PATH="${REMOTE_QUEUE_PATH//\//\\}"
 
 cat > "${QUEUE_FILE}" <<EOF
@@ -80,30 +80,18 @@ function Run-One(\$name, \$pluginName) {
     '--round_num', '${ROUND_NUM}',
     '--num_of_clients', '20',
     '--c_fraction', '0.2',
-    '--local_epoch', '${LOCAL_EPOCH}',
+    '--local_epoch', '5',
     '--batch_size', '${BATCH_SIZE}',
-    '--dataloader_num_workers', '0',
+    '--dataloader_num_workers', '2',
     '--dataloader_pin_memory', 'true',
     '--torch_cudnn_benchmark', 'true',
     '--gpu', 'true',
-    '--dataset_name', 'cifar10',
+    '--dataset_name', '${DATASET_NAME}',
     '--partition_strategy', 'dirichlet',
     '--dirichlet_alpha', '0.3',
-    '--min_samples_per_client', '1',
     '--enable_quantity_skew', 'true',
-    '--enable_feature_skew', 'false',
-    '--lr', '0.001',
-    '--early_stop_enable', 'true',
-    '--early_stop_min_rounds', '40',
-    '--early_stop_patience', '20',
-    '--early_stop_min_delta', '0.002',
+    '--enable_feature_skew', 'true',
     '--plugin_name', \$pluginName,
-    '--fedfed_distill_rounds', '30',
-    '--fedfed_distill_local_epoch', '2',
-    '--fedfed_upload_per_class', '20',
-    '--fedfed_upload_per_client', '200',
-    '--fedfed_shared_buffer_size', '4000',
-    '--fedfed_shared_per_class_size', '400',
     '--experiment_tag', \$runId
   )
 
@@ -116,7 +104,7 @@ function Run-One(\$name, \$pluginName) {
     stdout_log = \$stdoutPath
     stderr_log = \$stderrPath
     launched_utc = \$startedUtc
-    mode = 'fedfed_image_main_queue'
+    mode = 'default_alpha03_ep5_comparison_queue'
     arguments = \$trainArgs
   } | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 \$metaPath
 
@@ -154,10 +142,10 @@ function Run-One(\$name, \$pluginName) {
 
 try {
   New-Item -ItemType Directory -Force -Path \$runsRoot | Out-Null
-  Write-QueueStatus 'starting' '' 'FedAvg vs FedFedImage default CIFAR-10 scenario starting.'
+  Write-QueueStatus 'starting' '' 'FedAvg vs fedfed_prototype default alpha=0.3 epoch=5 comparison starting.'
   Run-One 'fedavg' 'none'
-  Run-One 'fedfed_image' 'fedfed_image'
-  Write-QueueStatus 'succeeded' '' 'FedAvg vs FedFedImage default CIFAR-10 scenario finished.'
+  Run-One 'fedfed_prototype' 'fedfed_prototype'
+  Write-QueueStatus 'succeeded' '' 'FedAvg vs fedfed_prototype comparison finished.'
 } catch {
   Add-Content -Path (Join-Path \$runsRoot ("\$prefix" + '_queue_error.log')) -Value (\$_ | Out-String)
   Write-QueueStatus 'failed' '' (\$_ | Out-String)
@@ -180,4 +168,4 @@ ssh_remote "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force
 scp_to_remote "${QUEUE_FILE}" "${REMOTE_QUEUE_PATH}"
 scp_to_remote "${LAUNCHER_FILE}" "${REMOTE_LAUNCHER_PATH}"
 ssh_remote "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${REMOTE_LAUNCHER_PATH}\""
-echo "FedFed image main queue submitted: ${PREFIX}"
+echo "Default alpha=0.3 epoch=5 comparison queue submitted: ${PREFIX}"

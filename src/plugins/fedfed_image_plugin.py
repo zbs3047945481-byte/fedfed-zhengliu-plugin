@@ -1,8 +1,10 @@
+import copy
+
 import torch
 import torch.nn.functional as F
 
 from src.plugins.base import BaseClientPlugin, BaseServerPlugin
-from src.plugins.fedfed_modules import FedFedGenerator
+from src.plugins.fedfed_modules import build_fedfed_generator
 
 
 class FedFedImageClientPlugin(BaseClientPlugin):
@@ -10,13 +12,19 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.options = options
         self.model = model
         self.device = device
+        self.distill_classifier = copy.deepcopy(model).to(device)
         self.input_channels = self._resolve_input_channels()
-        self.generator = FedFedGenerator(
+        self.generator = build_fedfed_generator(
+            options.get('fedfed_generator_type', 'beta_vae'),
             self.input_channels,
             latent_channels=int(options.get('fedfed_vae_latent_channels', 64)),
         ).to(device)
-        self.optimizer = torch.optim.Adam(
-            list(self.model.parameters()) + list(self.generator.parameters()),
+        self.model_optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=options.get('lr', 0.001),
+        )
+        self.distill_optimizer = torch.optim.Adam(
+            list(self.distill_classifier.parameters()) + list(self.generator.parameters()),
             lr=options.get('lr', 0.001),
             weight_decay=float(options.get('fedfed_generator_weight_decay', 0.0)),
         )
@@ -39,27 +47,41 @@ class FedFedImageClientPlugin(BaseClientPlugin):
 
     def to_device(self, device):
         self.device = device
+        self.distill_classifier.to(device)
         self.generator.to(device)
-        self._move_optimizer_state(device)
+        self._move_optimizer_state(self.model_optimizer, device)
+        self._move_optimizer_state(self.distill_optimizer, device)
         if self.shared_x is not None:
             self.shared_x = self.shared_x.to(device)
         if self.shared_y is not None:
             self.shared_y = self.shared_y.to(device)
 
-    def _move_optimizer_state(self, device):
-        for state in self.optimizer.state.values():
+    def _move_optimizer_state(self, optimizer, device):
+        for state in optimizer.state.values():
             for key, value in state.items():
                 if torch.is_tensor(value):
                     state[key] = value.to(device)
 
+    def _set_optimizer_lr(self, learning_rate):
+        for optimizer in (self.model_optimizer, self.distill_optimizer):
+            for group in optimizer.param_groups:
+                group['lr'] = learning_rate
+
     def on_round_start(self, learning_rate, server_payload):
-        for group in self.optimizer.param_groups:
-            group['lr'] = learning_rate
+        self._set_optimizer_lr(learning_rate)
+        self.model.train()
+        self.distill_classifier.eval()
         self.generator.train()
         self.shared_x = None
         self.shared_y = None
         if server_payload is not None:
             self.current_round = int(server_payload.get('round_index', self.current_round))
+            distill_classifier_state = server_payload.get('distill_classifier_state')
+            if distill_classifier_state is not None:
+                self.distill_classifier.load_state_dict(
+                    {key: value.to(self.device) for key, value in distill_classifier_state.items()},
+                    strict=True,
+                )
             generator_state = server_payload.get('generator_state')
             if generator_state is not None:
                 self.generator.load_state_dict(
@@ -138,7 +160,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             self.upload_counts[class_id] = self.upload_counts.get(class_id, 0) + 1
 
     def train_batch(self, X, y):
-        self.optimizer.zero_grad()
+        self.model_optimizer.zero_grad()
 
         pred_local = self.model(X)
         loss = F.cross_entropy(pred_local, y)
@@ -148,17 +170,19 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             or bool(self.options.get('fedfed_formal_online_distill', False))
         )
         if use_online_distill:
-            xs = self._sensitive_feature(X)
-            pred_sensitive = self.model(xs)
+            self.distill_optimizer.zero_grad()
+            xs_raw = self._raw_sensitive_feature(X)
+            xs = self._clip_sensitive_feature(X, xs_raw)
+            pred_sensitive = self.distill_classifier(xs)
             loss_fd = F.cross_entropy(pred_sensitive, y)
-            norm_penalty = xs.pow(2).flatten(1).mean(dim=1).mean()
-            robust_recon_loss = F.mse_loss((X - xs).clamp(0.0, 1.0), X)
+            rho_penalty = self._rho_violation(X, xs_raw)
             kl_loss = self.generator.last_kl
-            loss = loss + float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
-            loss = loss + float(self.options.get('fedfed_lambda_norm', 0.001)) * norm_penalty
-            loss = loss + float(self.options.get('fedfed_lambda_recon', 0.05)) * robust_recon_loss
+            distill_loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
+            distill_loss = distill_loss + float(self.options.get('fedfed_lambda_rho', 10.0)) * rho_penalty
             if kl_loss is not None:
-                loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+                distill_loss = distill_loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+            distill_loss.backward()
+            self.distill_optimizer.step()
 
         shared_x, shared_y = (None, None) if self.in_warmup else self._sample_shared_batch(X.size(0))
         if shared_x is not None:
@@ -170,18 +194,20 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             xs = self._sensitive_feature(X)
             self._maybe_collect_upload_samples(xs, y)
         loss.backward()
-        self.optimizer.step()
+        self.model_optimizer.step()
         return pred_local, loss.detach()
 
     def on_distill_start(self, learning_rate, server_payload):
         self.on_round_start(learning_rate, server_payload)
         self.in_warmup = True
+        self.model.eval()
+        self.distill_classifier.train()
 
     def distill_batch(self, X, y):
-        self.optimizer.zero_grad()
+        self.distill_optimizer.zero_grad()
         xs_raw = self._raw_sensitive_feature(X)
         xs = self._clip_sensitive_feature(X, xs_raw)
-        pred_sensitive = self.model(xs)
+        pred_sensitive = self.distill_classifier(xs)
         loss_fd = F.cross_entropy(pred_sensitive, y)
         rho_penalty = self._rho_violation(X, xs_raw)
         xs_norm = xs.flatten(1).norm(p=2, dim=1).mean()
@@ -191,7 +217,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         if kl_loss is not None:
             loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
         loss.backward()
-        self.optimizer.step()
+        self.distill_optimizer.step()
         self.last_distill_stats = {
             'fd_loss': float(loss_fd.detach().item()),
             'rho_penalty': float(rho_penalty.detach().item()),
@@ -210,6 +236,10 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             'generator_state': {
                 key: value.detach().cpu().clone()
                 for key, value in self.generator.state_dict().items()
+            },
+            'distill_classifier_state': {
+                key: value.detach().cpu().clone()
+                for key, value in self.distill_classifier.state_dict().items()
             }
         }
         if self.upload_y:
@@ -224,6 +254,7 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         self.device = device
         self.current_round = 0
         self.generator_state = None
+        self.distill_classifier_state = None
         self.shared_by_class = {}
 
     def set_round_index(self, round_index):
@@ -246,6 +277,8 @@ class FedFedImageServerPlugin(BaseServerPlugin):
 
     def build_feature_distill_payload(self):
         payload = {'round_index': self.current_round}
+        if self.distill_classifier_state is not None:
+            payload['distill_classifier_state'] = self.distill_classifier_state
         if self.generator_state is not None:
             payload['generator_state'] = self.generator_state
         return payload
@@ -255,6 +288,7 @@ class FedFedImageServerPlugin(BaseServerPlugin):
 
     def aggregate_generator_states(self, local_model_paras_set):
         self._aggregate_generator(local_model_paras_set)
+        self._aggregate_distill_classifier(local_model_paras_set)
 
     def collect_shared_payloads(self, local_model_paras_set):
         self._update_shared_buffer(local_model_paras_set, force=True)
@@ -284,6 +318,31 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         if not state_sums or total_weight <= 0:
             return
         self.generator_state = {
+            key: ((value / total_weight) if value.is_floating_point() else value).to(self.device)
+            for key, value in state_sums.items()
+        }
+
+    def _aggregate_distill_classifier(self, local_model_paras_set):
+        state_sums = {}
+        total_weight = 0
+        for update in local_model_paras_set:
+            aux = update.get('aux')
+            if not aux or 'distill_classifier_state' not in aux:
+                continue
+            weight = int(update.get('num_samples', 1))
+            for key, value in aux['distill_classifier_state'].items():
+                value = value.detach().cpu()
+                if not value.is_floating_point():
+                    state_sums[key] = value.clone()
+                    continue
+                if key not in state_sums:
+                    state_sums[key] = value.clone() * weight
+                else:
+                    state_sums[key] += value * weight
+            total_weight += weight
+        if not state_sums or total_weight <= 0:
+            return
+        self.distill_classifier_state = {
             key: ((value / total_weight) if value.is_floating_point() else value).to(self.device)
             for key, value in state_sums.items()
         }

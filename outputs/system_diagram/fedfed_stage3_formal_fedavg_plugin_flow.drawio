@@ -1,0 +1,74 @@
+<mxfile host="app.diagrams.net" modified="2026-05-02T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="fedfed_stage3_formal_fedavg_plugin_flow" name="阶段三：正式 FedAvg 中插件如何通过共享特征训练分类器">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="阶段三：正式 FedAvg 中插件如何通过共享特征训练分类器" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="25" width="1160" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="server" value="FedAvg Server
+广播 w_global
+同时由插件下发 shared_x_s, shared_y" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="90" width="360" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="client" value="客户端基线训练入口不变
+local_train -&gt; plugin.train_batch
+同一个分类模型 f(.; w)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="290" width="330" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="local" value="本地原图分支
+输入 x_local
+L_local = CE(f(x_local), y_local)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="285" width="330" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared" value="共享特征分支
+从 D_s 采样 shared_x_s
+L_shared = CE(f(shared_x_s), shared_y)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="920" y="285" width="360" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="loss" value="正式训练总损失
+L = L_local + lambda_shared * L_shared
+formal_online_distill = false
+正式阶段不再在线蒸馏生成器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEBEE;strokeColor=#C62828;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="565" width="390" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="agg" value="FedAvg 聚合保持原样
+客户端上传训练后的 w_k
+服务器按样本数加权平均" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#455A64;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="960" y="565" width="330" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="effect" value="插件对基线模型的实际作用
+不改分类器结构
+通过额外 shared CE 改变梯度
+缓解 label skew 下的 client drift" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00695C;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="95" y="565" width="340" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="w_global + shared pool" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="server" target="client">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="本地 batch" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="client" target="local">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="共享 batch" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="client" target="shared">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="L_local" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="local" target="loss">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="L_shared" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="shared" target="loss">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="额外梯度作用于 f" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="loss" target="effect">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="更新后上传 w_k" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="loss" target="agg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="FedAvg" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="agg" target="server">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

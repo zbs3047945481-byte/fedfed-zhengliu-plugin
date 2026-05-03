@@ -1,0 +1,72 @@
+<mxfile host="app.diagrams.net" modified="2026-05-02T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="fedfed_stage2_framework_shared_pool" name="阶段二框架图：FedFed 插件如何构建服务器共享特征池">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="阶段二框架图：FedFed 插件如何构建服务器共享特征池" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="80" y="20" width="1240" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="g1" value="客户端侧：共享特征提取插件" style="swimlane;html=1;startSize=32;rounded=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="520" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="local" value="本地私有数据 D_k
+只保留 label skew" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2E7D32;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="115" y="190" width="210" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="model" value="已蒸馏的分类器 f
+已蒸馏的生成器 q" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="335" y="190" width="200" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="extract" value="collect_shared_batch
+x_s = clip(x - q(x))
+生成 (x_s, y)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00695C;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="155" y="340" width="330" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="limit" value="上传门控
+每类最多 20
+每客户端最多 200" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="175" y="505" width="290" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="g2" value="服务器侧：全局共享数据集 D_s" style="swimlane;html=1;startSize=32;rounded=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="715" y="120" width="565" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool" value="Per-class FIFO Buffer
+10 个类别各自一个队列" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#4527A0;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="785" y="190" width="420" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="cap" value="容量控制
+每类最多 400
+全局最多 4000" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6A1B9A;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="825" y="330" width="340" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="dataset" value="形成共享特征数据集 D_s
+{(x_s, y)}
+供正式 FedAvg 阶段广播给客户端" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="785" y="490" width="420" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="x,y" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="local" target="extract">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="q(x)" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="model" target="extract">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="候选 x_s" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="extract" target="limit">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="上传" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="limit" target="pool">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="FIFO 截断" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="pool" target="cap">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="稳定保存" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="cap" target="dataset">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="按类维护" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="dataset" target="pool">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

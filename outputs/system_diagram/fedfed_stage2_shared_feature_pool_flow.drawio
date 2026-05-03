@@ -1,0 +1,63 @@
+<mxfile host="app.diagrams.net" modified="2026-05-02T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="fedfed_stage2_shared_feature_pool_flow" name="阶段二：共享性能敏感特征池的构建与维护">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="阶段二：共享性能敏感特征池的构建与维护" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="120" y="25" width="1160" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="server" value="服务器广播蒸馏后的全局模型
+w_global + theta_global" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="520" y="95" width="330" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="clients" value="所有客户端参与收集
+每个 client 用本地 D_k 生成 x_s
+不再训练，只 collect_shared_batch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="265" width="330" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="extract" value="客户端插件提取共享特征
+x_r = q(x)
+x_s = clip(x - q(x))
+上传 (x_s, y)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00695C;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="520" y="265" width="330" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="limits" value="上传限制
+upload_per_class = 20
+upload_per_client = 200
+避免单客户端/单类别挤占共享池" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="940" y="265" width="320" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool" value="服务器全局共享特征池 D_s
+按 10 个类别分别维护 FIFO 队列
+shared_per_class_size = 400
+shared_buffer_size = 4000" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#4527A0;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="555" width="410" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="dist" value="它补什么？
+补每个客户端缺失/稀少类别的性能敏感特征
+让后续本地训练看到更接近全局的类别信息" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="555" width="360" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="广播" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="server" target="clients">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="x, y" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="clients" target="extract">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="候选上传样本" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="extract" target="limits">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="按类入队" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="limits" target="pool">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="作为全局共享数据集 D_s" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="pool" target="dist">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="保存在 server plugin" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" edge="1" parent="1" source="pool" target="server">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

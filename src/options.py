@@ -34,7 +34,7 @@ def input_options():
     parser.add_argument('--gpu', type=str2bool, default=True, help='gpu id to use')
     #是否使用 GPU
     
-    parser.add_argument('--round_num', type=int, default=301, help='number of round in comm')
+    parser.add_argument('--round_num', type=int, default=150, help='number of round in comm')
     #通信轮数：每一轮 = 一次 FedAvg 聚合
     
     parser.add_argument('--num_of_clients', type=int, default=20, help='numer of the clients')
@@ -144,6 +144,9 @@ def input_options():
                         help='Rounds used only for feature distillation before uploading/using shared x_s.')
     parser.add_argument('--fedfed_vae_latent_channels', type=int, default=64,
                         help='Latent channel width of the image-space beta-VAE generator.')
+    parser.add_argument('--fedfed_generator_type', type=str, default='beta_vae',
+                        choices=['beta_vae', 'resnet', 'autoencoder'],
+                        help='Image-space generator type used for q(x).')
     parser.add_argument('--fedfed_lambda_recon', type=float, default=0.05,
                         help='Weight of reconstruction loss that keeps q(x) close to x.')
     parser.add_argument('--fedfed_beta_kl', type=float, default=0.001,

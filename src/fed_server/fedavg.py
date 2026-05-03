@@ -126,7 +126,6 @@ class FedAvgTrainer(BaseFederated):
                        stat['loss'], stat.get('fd_loss', 0.0),
                        stat.get('rho_penalty', 0.0), stat.get('xs_norm', 0.0),
                        stat['acc'] * 100, stat['time'], ))
-            self.latest_global_model = self._aggregate_weights_only(local_updates)
             self.server_plugin.aggregate_generator_states(local_updates)
 
         self._collect_fedfed_shared_dataset()

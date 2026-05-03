@@ -1,0 +1,85 @@
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="fedfed_stage1_framework_feature_distillation" name="阶段一框架图：FedFed 插件如何在蒸馏阶段作用于基线分类模型">
+    <mxGraphModel dx="1504" dy="684" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" value="阶段一框架图：FedFed 插件如何在蒸馏阶段作用于基线分类模型" vertex="1">
+          <mxGeometry height="45" width="1240" x="80" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="g1" parent="1" style="swimlane;html=1;startSize=32;rounded=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=16;fontStyle=1;" value="FedAvg 基线分类模型" vertex="1">
+          <mxGeometry height="560" width="360" x="60" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="data" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#1565C0;fontSize=15;fontStyle=1;" value="本地 batch (x, y)" vertex="1">
+          <mxGeometry height="80" width="270" x="105" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="clf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=15;fontStyle=1;" value="分类器 f(.; w) CIFAR ResNet18 结构不改" vertex="1">
+          <mxGeometry height="115" width="270" x="105" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="ce" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#1565C0;fontSize=15;fontStyle=1;" value="基线 CE 接口 原本：CE(f(x), y) 蒸馏阶段：CE(f(x_s), y)" vertex="1">
+          <mxGeometry height="115" width="270" x="105" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="g2" parent="1" style="swimlane;html=1;startSize=32;rounded=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=16;fontStyle=1;" value="FedFed 插件：Feature Distillation 模块" vertex="1">
+          <mxGeometry height="560" width="770" x="520" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="g2" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" value="下一轮 theta">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="471.81391304347846" y="420" as="sourcePoint" />
+            <mxPoint x="220.0023188405795" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="gen" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#6A1B9A;fontSize=15;fontStyle=1;" value="生成器 q(.; theta) 输出 x_r = q(x)" vertex="1">
+          <mxGeometry height="100" width="260" x="570" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="split" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00695C;fontSize=15;fontStyle=1;" value="分离器 x_s_raw = x - q(x)&amp;nbsp;&lt;div&gt;x_s = clip(x_s_raw)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="300" x="910" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="rho" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;fontSize=15;fontStyle=1;" value="rho 约束模块 控制 ||x_s|| 防止 x_s 直接复制原图" vertex="1">
+          <mxGeometry height="115" width="300" x="910" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="loss" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEBEE;strokeColor=#C62828;fontSize=15;fontStyle=1;" value="蒸馏总目标 L_fd + L_rho + KL 反向更新 w 和 theta" vertex="1">
+          <mxGeometry height="150" width="260" x="570" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="agg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#455A64;fontSize=15;fontStyle=1;" value="Server 聚合 FedAvg 聚合 w 插件聚合 theta" vertex="1">
+          <mxGeometry height="90" width="325" x="885" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="data" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="gen" value="x">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="gen" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="split" value="q(x)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" value="x">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="375" y="200.00268292682924" as="sourcePoint" />
+            <mxPoint x="910" y="213.05146341463418" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="split" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="clf" value="x_s 接入同一个 f">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="clf" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="ce" value="logits">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="ce" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="loss" value="L_fd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="split" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="rho" value="范数">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="rho" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="loss" value="L_rho">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="loss" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;" target="agg" value="上传 w, theta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" style="endArrow=block;html=1;rounded=0;strokeWidth=2;strokeColor=#455A64;fontSize=12;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" target="clf" value="下一轮 w">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="885" y="603.417801857585" as="sourcePoint" />
+            <mxPoint x="380" y="470" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
