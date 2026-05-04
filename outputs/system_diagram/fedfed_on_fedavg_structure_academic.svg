@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <defs>
+    <style>
+      .bg{fill:#fff}.base{fill:#f7f9fc;stroke:#d6deea;stroke-width:1.4;rx:14}.box{fill:#fff;stroke:#223147;stroke-width:1.6;rx:8}.client{fill:#fdfefe;stroke:#223147;stroke-width:1.4;rx:8}.fedfed{fill:#f5faf5;stroke:#5b7a62;stroke-width:1.5;rx:8}.state{fill:#fff9ed;stroke:#987538;stroke-width:1.4;rx:8}.txt{font-family:Arial,Helvetica,sans-serif;fill:#17212f}.title{font-size:23px;font-weight:700}.cap{font-size:13px;font-weight:700;fill:#42526a}.h{font-size:17px;font-weight:700}.m{font-size:14px}.s{font-size:12px;fill:#42526a}.solid{stroke:#223147;stroke-width:1.8;fill:none;marker-end:url(#arrow)}.dash{stroke:#5b7a62;stroke-width:1.9;fill:none;stroke-dasharray:7 5;marker-end:url(#arrowG)}.muted{stroke:#9aa8ba;stroke-width:1.1;fill:none}.label{font-size:12px;fill:#42526a}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#223147"/></marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b7a62"/></marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1400" height="860"/>
+  <text class="txt title" x="700" y="42" text-anchor="middle">Structural Coupling of FedFed Plugin with the FedAvg Baseline</text>
+
+  <rect class="base" x="70" y="86" width="1260" height="430"/>
+  <text class="txt cap" x="95" y="116">FEDAVG BASELINE, PRESERVED AS THE PRIMARY OPTIMIZATION PATH</text>
+
+  <rect class="box" x="120" y="165" width="250" height="145"/>
+  <text class="txt h" x="245" y="197" text-anchor="middle">Global Model</text>
+  <text class="txt m" x="245" y="226" text-anchor="middle">classifier parameters</text>
+  <text class="txt s" x="245" y="254" text-anchor="middle">w<tspan baseline-shift="super">t</tspan></text>
+  <text class="txt s" x="245" y="278" text-anchor="middle">task model architecture unchanged</text>
+
+  <rect class="client" x="515" y="130" width="350" height="225"/>
+  <text class="txt h" x="690" y="164" text-anchor="middle">Selected Client k</text>
+  <text class="txt m" x="690" y="194" text-anchor="middle">local replica initialized by w<tspan baseline-shift="super">t</tspan></text>
+  <rect class="box" x="550" y="222" width="135" height="82"/>
+  <text class="txt s" x="618" y="253" text-anchor="middle">task forward</text>
+  <text class="txt s" x="618" y="276" text-anchor="middle">CE loss</text>
+  <rect class="box" x="715" y="222" width="115" height="82"/>
+  <text class="txt s" x="773" y="253" text-anchor="middle">optimizer</text>
+  <text class="txt s" x="773" y="276" text-anchor="middle">local update</text>
+
+  <rect class="box" x="1000" y="165" width="255" height="145"/>
+  <text class="txt h" x="1128" y="197" text-anchor="middle">FedAvg Aggregator</text>
+  <text class="txt m" x="1128" y="226" text-anchor="middle">sample-size weighted mean</text>
+  <text class="txt s" x="1128" y="254" text-anchor="middle">w<tspan baseline-shift="super">t+1</tspan> = Σ n<tspan baseline-shift="sub">k</tspan>w<tspan baseline-shift="sub">k</tspan> / Σ n<tspan baseline-shift="sub">k</tspan></text>
+  <text class="txt s" x="1128" y="278" text-anchor="middle">ignores plugin internals</text>
+
+  <path class="solid" d="M370 235 C430 235 455 235 515 235"/>
+  <text class="txt label" x="443" y="216" text-anchor="middle">model broadcast</text>
+  <path class="solid" d="M865 235 C920 235 945 235 1000 235"/>
+  <text class="txt label" x="932" y="216" text-anchor="middle">weights, n<tspan baseline-shift="sub">k</tspan></text>
+  <path class="solid" d="M1000 285 C760 458 430 438 245 310"/>
+  <text class="txt label" x="670" y="450" text-anchor="middle">next global model</text>
+
+  <rect class="base" x="70" y="550" width="1260" height="250"/>
+  <text class="txt cap" x="95" y="580">FEDFED PLUGIN, ATTACHED AS AN AUXILIARY STRUCTURAL LAYER</text>
+
+  <rect class="fedfed" x="160" y="625" width="320" height="110"/>
+  <text class="txt h" x="320" y="657" text-anchor="middle">Client-Side FedFed Module</text>
+  <text class="txt s" x="320" y="685" text-anchor="middle">auxiliary representation / feature separator</text>
+  <text class="txt s" x="320" y="708" text-anchor="middle">class-aware shared evidence construction</text>
+
+  <rect class="fedfed" x="560" y="625" width="285" height="110"/>
+  <text class="txt h" x="703" y="657" text-anchor="middle">Regularization Adapter</text>
+  <text class="txt s" x="703" y="685" text-anchor="middle">injects FedFed objective into local loss</text>
+  <text class="txt s" x="703" y="708" text-anchor="middle">L<tspan baseline-shift="sub">local</tspan> = L<tspan baseline-shift="sub">CE</tspan> + λL<tspan baseline-shift="sub">FedFed</tspan></text>
+
+  <rect class="state" x="930" y="625" width="320" height="110"/>
+  <text class="txt h" x="1090" y="657" text-anchor="middle">Server-Side FedFed State</text>
+  <text class="txt s" x="1090" y="685" text-anchor="middle">aggregated plugin parameters or shared bank</text>
+  <text class="txt s" x="1090" y="708" text-anchor="middle">broadcasted separately from model weights</text>
+
+  <path class="dash" d="M480 680 C515 680 530 680 560 680"/>
+  <text class="txt label" x="520" y="660" text-anchor="middle">FedFed loss term</text>
+  <path class="dash" d="M845 680 C875 680 900 680 930 680"/>
+  <text class="txt label" x="888" y="660" text-anchor="middle">aux upload</text>
+  <path class="dash" d="M1090 625 C1030 520 830 410 760 305"/>
+  <text class="txt label" x="1003" y="506" text-anchor="middle">plugin payload to clients</text>
+  <path class="dash" d="M703 625 C692 525 690 420 690 355"/>
+  <text class="txt label" x="755" y="492">acts only inside client training</text>
+
+  <rect class="fedfed" x="535" y="760" width="330" height="36"/>
+  <text class="txt s" x="700" y="783" text-anchor="middle">FedAvg remains the optimization backbone; FedFed adds an auxiliary representation-sharing and regularization structure.</text>
+
+  <rect x="85" y="822" width="170" height="1.5" fill="#223147"/>
+  <text class="txt s" x="275" y="827">solid: baseline model-weight channel</text>
+  <line x1="85" y1="845" x2="255" y2="845" stroke="#5b7a62" stroke-width="1.9" stroke-dasharray="7 5"/>
+  <text class="txt s" x="275" y="850">dashed: FedFed auxiliary channel</text>
+</svg>

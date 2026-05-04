@@ -25,17 +25,8 @@ from src.utils.tools import (
 )
 
 
-def clip_sensitive(x, xs, rho):
-    if rho <= 0:
-        return xs
-    xs_norm = xs.flatten(1).norm(p=2, dim=1).clamp_min(1e-12)
-    x_budget = rho * x.flatten(1).norm(p=2, dim=1).clamp_min(1e-12)
-    scale = torch.minimum(torch.ones_like(xs_norm), x_budget / xs_norm)
-    return xs * scale.view(-1, 1, 1, 1)
-
-
 @torch.no_grad()
-def transform_dataset(data, labels, generator, mode, device, batch_size, rho, limit):
+def transform_dataset(data, labels, generator, mode, device, batch_size, limit):
     if limit > 0:
         data = data[:limit]
         labels = labels[:limit]
@@ -52,7 +43,7 @@ def transform_dataset(data, labels, generator, mode, device, batch_size, rho, li
             z = x
         else:
             xr = generator(x)
-            xs = clip_sensitive(x, x - xr, rho)
+            xs = x - xr
             z = xs if mode == 'xs' else xr
         xs_out.append(z.cpu())
         y_out.append(y)
@@ -151,17 +142,16 @@ def main():
         for key, value in trainer.server_plugin.generator_state.items()
     })
 
-    rho = float(options.get('fedfed_rho', 0.0))
     batch_size = int(options['batch_size'])
     train_limit = int(options.get('diagnostic_train_limit', 20000))
     test_limit = int(options.get('diagnostic_test_limit', 10000))
     results = []
     for mode in ('x', 'xs', 'xr'):
         train_ds = transform_dataset(
-            dataset.train_data, dataset.train_label, generator, mode, device, batch_size, rho, train_limit
+            dataset.train_data, dataset.train_label, generator, mode, device, batch_size, train_limit
         )
         test_ds = transform_dataset(
-            dataset.test_data, dataset.test_label, generator, mode, device, batch_size, rho, test_limit
+            dataset.test_data, dataset.test_label, generator, mode, device, batch_size, test_limit
         )
         results.append(train_classifier(options, train_ds, test_ds, device, mode))
 

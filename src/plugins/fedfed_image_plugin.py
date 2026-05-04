@@ -1,10 +1,85 @@
 import copy
+import random
 
 import torch
 import torch.nn.functional as F
 
 from src.plugins.base import BaseClientPlugin, BaseServerPlugin
 from src.plugins.fedfed_modules import build_fedfed_generator
+
+
+def _batch_random_crop(x, padding=4):
+    if padding <= 0:
+        return x
+    padded = F.pad(x, (padding, padding, padding, padding), mode='reflect')
+    output = torch.empty_like(x)
+    height, width = x.shape[-2:]
+    max_offset = padding * 2
+    for idx in range(x.size(0)):
+        top = torch.randint(0, max_offset + 1, (1,), device=x.device).item()
+        left = torch.randint(0, max_offset + 1, (1,), device=x.device).item()
+        output[idx] = padded[idx, :, top:top + height, left:left + width]
+    return output
+
+
+def _batch_horizontal_flip(x, probability=0.5):
+    mask = torch.rand(x.size(0), device=x.device) < probability
+    if not mask.any():
+        return x
+    output = x.clone()
+    output[mask] = torch.flip(output[mask], dims=(-1,))
+    return output
+
+
+def _train_augment(x, enabled=True):
+    if not enabled:
+        return x
+    return _batch_horizontal_flip(_batch_random_crop(x, padding=4), probability=0.5)
+
+
+def _mixup_data(x, y, alpha):
+    if alpha <= 0.0 or x.size(0) < 2:
+        return x, y, y, 1.0
+    lam = torch.distributions.Beta(alpha, alpha).sample().to(x.device).item()
+    indices = torch.randperm(x.size(0), device=x.device)
+    mixed_x = lam * x + (1.0 - lam) * x[indices]
+    return mixed_x, y, y[indices], lam
+
+
+def _cutout(image, length):
+    _, height, width = image.shape
+    center_y = random.randint(0, height - 1)
+    center_x = random.randint(0, width - 1)
+    y1 = max(center_y - length // 2, 0)
+    y2 = min(center_y + length // 2, height)
+    x1 = max(center_x - length // 2, 0)
+    x2 = min(center_x + length // 2, width)
+    image[:, y1:y2, x1:x2] = 0.0
+    return image
+
+
+def _mosaic_batch(x, output_count):
+    if x.size(0) < 4:
+        return x
+    output_count = x.size(0) if output_count <= 0 else output_count
+    channels, height, width = x.shape[1:]
+    half_h = height // 2
+    half_w = width // 2
+    output = torch.empty((output_count, channels, height, width), device=x.device, dtype=x.dtype)
+    for out_idx in range(output_count):
+        sample_ids = torch.randperm(x.size(0), device=x.device)[:4]
+        patch_top = torch.randint(0, height - half_h + 1, (4,), device=x.device)
+        patch_left = torch.randint(0, width - half_w + 1, (4,), device=x.device)
+        image = torch.zeros((channels, height, width), device=x.device, dtype=x.dtype)
+        slots = ((0, half_h, 0, half_w), (0, half_h, half_w, width),
+                 (half_h, height, 0, half_w), (half_h, height, half_w, width))
+        for slot_idx, sample_id in enumerate(sample_ids):
+            y1, y2, x1, x2 = slots[slot_idx]
+            top = int(patch_top[slot_idx].item())
+            left = int(patch_left[slot_idx].item())
+            image[:, y1:y2, x1:x2] = x[sample_id, :, top:top + half_h, left:left + half_w]
+        output[out_idx] = _cutout(image, length=min(half_h, half_w))
+    return output
 
 
 class FedFedImageClientPlugin(BaseClientPlugin):
@@ -15,9 +90,9 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.distill_classifier = copy.deepcopy(model).to(device)
         self.input_channels = self._resolve_input_channels()
         self.generator = build_fedfed_generator(
-            options.get('fedfed_generator_type', 'beta_vae'),
+            options.get('fedfed_generator_type', 'paper_beta_vae'),
             self.input_channels,
-            latent_channels=int(options.get('fedfed_vae_latent_channels', 64)),
+            latent_channels=int(options.get('fedfed_vae_latent_channels', 32)),
             z_dim=int(options.get('fedfed_vae_z_dim', 2048)),
         ).to(device)
         self.model_optimizer = torch.optim.Adam(
@@ -25,7 +100,8 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             lr=options.get('lr', 0.001),
         )
         self.distill_optimizer = self._build_distill_optimizer()
-        self.shared_x = None
+        self.shared_x1 = None
+        self.shared_x2 = None
         self.shared_y = None
         self.current_round = 0
         self.upload_x = []
@@ -33,6 +109,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.upload_counts = {}
         self.in_warmup = False
         self.last_distill_stats = {}
+        self.distill_epoch = 1
 
     def _resolve_input_channels(self):
         dataset_name = str(self.options.get('dataset_name', '')).lower()
@@ -48,8 +125,10 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.generator.to(device)
         self._move_optimizer_state(self.model_optimizer, device)
         self._move_optimizer_state(self.distill_optimizer, device)
-        if self.shared_x is not None:
-            self.shared_x = self.shared_x.to(device)
+        if self.shared_x1 is not None:
+            self.shared_x1 = self.shared_x1.to(device)
+        if self.shared_x2 is not None:
+            self.shared_x2 = self.shared_x2.to(device)
         if self.shared_y is not None:
             self.shared_y = self.shared_y.to(device)
 
@@ -70,7 +149,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         lr = float(self.options.get('fedfed_distill_lr', self.options.get('lr', 0.001)))
         weight_decay = float(self.options.get(
             'fedfed_distill_weight_decay',
-            self.options.get('fedfed_generator_weight_decay', 0.0),
+            0.0,
         ))
         optimizer_name = str(self.options.get('fedfed_distill_optimizer', 'adamw')).lower()
         if optimizer_name == 'sgd':
@@ -84,7 +163,8 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.model.train()
         self.distill_classifier.eval()
         self.generator.train()
-        self.shared_x = None
+        self.shared_x1 = None
+        self.shared_x2 = None
         self.shared_y = None
         if server_payload is not None:
             self.current_round = int(server_payload.get('round_index', self.current_round))
@@ -100,98 +180,109 @@ class FedFedImageClientPlugin(BaseClientPlugin):
                     {key: value.to(self.device) for key, value in generator_state.items()},
                     strict=True,
                 )
-            shared_x = server_payload.get('shared_x')
+            shared_x1 = server_payload.get('shared_x1')
+            shared_x2 = server_payload.get('shared_x2')
             shared_y = server_payload.get('shared_y')
-            if shared_x is not None and shared_y is not None and len(shared_y) > 0:
-                self.shared_x = shared_x.to(self.device)
+            if shared_x1 is None:
+                shared_x1 = server_payload.get('shared_x')
+            if shared_x2 is None:
+                shared_x2 = shared_x1
+            if shared_x1 is not None and shared_y is not None and len(shared_y) > 0:
+                self.shared_x1 = shared_x1.to(self.device)
+                self.shared_x2 = shared_x2.to(self.device)
                 self.shared_y = shared_y.to(self.device)
-        warmup_rounds = int(self.options.get('fedfed_hard_warmup_rounds', 10))
-        self.in_warmup = (
-            self.current_round < warmup_rounds
-            and not bool(self.options.get('fedfed_two_stage', True))
-        )
+        self.in_warmup = False
         self.upload_x = []
         self.upload_y = []
         self.upload_counts = {}
 
     def _sensitive_feature(self, x):
         robust = self.generator(x)
-        return self._clip_sensitive_feature(x, x - robust)
+        return x - robust
 
     def _raw_sensitive_feature(self, x):
         robust = self.generator(x)
         return x - robust
 
-    def _clip_sensitive_feature(self, x, xs):
-        rho = float(self.options.get('fedfed_rho', 0.0))
-        if rho <= 0:
-            return xs
-        xs_flat = xs.flatten(1)
-        x_flat = x.flatten(1)
-        xs_norm = xs_flat.norm(p=2, dim=1).clamp_min(1e-12)
-        x_budget = rho * x_flat.norm(p=2, dim=1).clamp_min(1e-12)
-        scale = torch.minimum(torch.ones_like(xs_norm), x_budget / xs_norm)
-        return xs * scale.view(-1, *([1] * (xs.dim() - 1)))
-
-    def _rho_violation(self, x, xs):
-        rho = float(self.options.get('fedfed_rho', 0.0))
-        if rho <= 0:
-            return xs.new_tensor(0.0)
-        xs_norm = xs.flatten(1).norm(p=2, dim=1)
-        x_budget = rho * x.flatten(1).norm(p=2, dim=1).detach()
-        return F.relu(xs_norm - x_budget).pow(2).mean()
-
     def _distill_objective(self, X, y):
+        X = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
         xs_raw = self._raw_sensitive_feature(X)
         robust = X - xs_raw
-        xs = self._clip_sensitive_feature(X, xs_raw)
-        pred_sensitive = self.distill_classifier(xs)
-        loss_fd = F.cross_entropy(pred_sensitive, y)
+        xs = xs_raw
+        pred_sensitive1 = self.distill_classifier(xs)
+        pred_sensitive2 = self.distill_classifier(xs)
+        pred_sensitive = torch.cat([pred_sensitive1, pred_sensitive2], dim=0)
+        loss_fd = F.cross_entropy(pred_sensitive, y.repeat(2))
         loss_recon = F.mse_loss(robust, X)
         pred_raw = self.distill_classifier(X)
         loss_x_ce = F.cross_entropy(pred_raw, y)
-        rho_penalty = self._rho_violation(X, xs_raw)
         kl_loss = self.generator.last_kl
         loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
-        loss = loss + float(self.options.get('fedfed_lambda_recon', 0.0)) * loss_recon
+        loss = loss + self._reconstruction_weight(self.distill_epoch) * loss_recon
         loss = loss + float(self.options.get('fedfed_lambda_x_ce', 0.0)) * loss_x_ce
-        loss = loss + float(self.options.get('fedfed_lambda_rho', 10.0)) * rho_penalty
         if kl_loss is not None:
             loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
-        return pred_sensitive, loss, {
+        return pred_sensitive1, loss, {
             'fd_loss': loss_fd,
             'recon_loss': loss_recon,
             'x_ce_loss': loss_x_ce,
-            'rho_penalty': rho_penalty,
             'xs_norm': xs.flatten(1).norm(p=2, dim=1).mean(),
             'kl_loss': kl_loss if kl_loss is not None else xs.new_tensor(0.0),
         }
 
+    def _reconstruction_weight(self, epoch=None):
+        weight = float(self.options.get('fedfed_lambda_recon', 0.0))
+        if bool(self.options.get('fedfed_vae_curriculum', True)):
+            epoch = self.distill_epoch if epoch is None else int(epoch)
+            if epoch < 10:
+                return 10.0 * weight
+            if epoch < 20:
+                return 5.0 * weight
+        return weight
+
     def _sample_shared_batch(self, batch_size):
-        if self.shared_x is None or self.shared_y is None or len(self.shared_y) == 0:
-            return None, None
-        sample_size = min(
-            int(self.options.get('fedfed_shared_batch_size', batch_size)),
-            len(self.shared_y),
-        )
+        if self.shared_x1 is None or self.shared_x2 is None or self.shared_y is None or len(self.shared_y) == 0:
+            return None, None, None
+        configured_size = int(self.options.get('fedfed_shared_batch_size', 0))
+        sample_size = min(configured_size if configured_size > 0 else batch_size, len(self.shared_y))
         if sample_size <= 0:
-            return None, None
-        indices = torch.randint(0, len(self.shared_y), (sample_size,), device=self.device)
-        return self.shared_x[indices], self.shared_y[indices]
+            return None, None, None
+        indices = self._balanced_shared_indices(sample_size)
+        return self.shared_x1[indices], self.shared_x2[indices], self.shared_y[indices]
+
+    def _balanced_shared_indices(self, sample_size):
+        classes = torch.unique(self.shared_y)
+        if classes.numel() == 0:
+            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.device)
+        per_class = sample_size // classes.numel()
+        remainder = sample_size - per_class * classes.numel()
+        selected = []
+        for position, class_id in enumerate(classes.tolist()):
+            class_indices = torch.nonzero(self.shared_y == int(class_id), as_tuple=False).flatten()
+            take = per_class + (1 if position < remainder else 0)
+            if take <= 0 or class_indices.numel() == 0:
+                continue
+            draw = torch.randint(0, class_indices.numel(), (take,), device=self.device)
+            selected.append(class_indices[draw])
+        if not selected:
+            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.device)
+        indices = torch.cat(selected, dim=0)
+        if indices.numel() < sample_size:
+            extra = torch.randint(0, len(self.shared_y), (sample_size - indices.numel(),), device=self.device)
+            indices = torch.cat([indices, extra], dim=0)
+        return indices[torch.randperm(indices.numel(), device=self.device)]
 
     def _maybe_collect_upload_samples(self, xs, y):
-        per_class_limit = int(self.options.get('fedfed_upload_per_class', 4))
-        total_limit = int(self.options.get('fedfed_upload_per_client', 40))
-        if per_class_limit <= 0 or total_limit <= 0:
-            return
+        per_class_limit = int(self.options.get('fedfed_upload_per_class', 0))
+        total_limit = int(self.options.get('fedfed_upload_per_client', 0))
         xs = xs.detach().cpu()
         y = y.detach().cpu()
         order = torch.randperm(y.numel()).tolist()
         for idx in order:
-            if len(self.upload_y) >= total_limit:
+            if total_limit > 0 and len(self.upload_y) >= total_limit:
                 break
             class_id = int(y[idx].item())
-            if self.upload_counts.get(class_id, 0) >= per_class_limit:
+            if per_class_limit > 0 and self.upload_counts.get(class_id, 0) >= per_class_limit:
                 continue
             self.upload_x.append(xs[idx].clone())
             self.upload_y.append(y[idx].clone())
@@ -199,36 +290,20 @@ class FedFedImageClientPlugin(BaseClientPlugin):
 
     def train_batch(self, X, y):
         self.model_optimizer.zero_grad()
+        X_train = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
 
-        pred_local = self.model(X)
+        pred_local = self.model(X_train)
         loss = F.cross_entropy(pred_local, y)
 
-        use_online_distill = (
-            not bool(self.options.get('fedfed_two_stage', True))
-            or bool(self.options.get('fedfed_formal_online_distill', False))
-        )
-        if use_online_distill:
-            self.distill_optimizer.zero_grad()
-            _, distill_loss, _ = self._distill_objective(X, y)
-            distill_loss.backward()
-            self.distill_optimizer.step()
-
-        shared_x, shared_y = (None, None) if self.in_warmup else self._sample_shared_batch(X.size(0))
-        if shared_x is not None:
-            if str(self.options.get('fedfed_shared_mix_mode', 'concat')).lower() == 'concat':
-                mixed_x = torch.cat([X, shared_x], dim=0)
-                mixed_y = torch.cat([y, shared_y], dim=0)
-                pred_mixed = self.model(mixed_x)
-                loss = F.cross_entropy(pred_mixed, mixed_y)
-                pred_local = pred_mixed[:X.size(0)]
-            else:
-                pred_shared = self.model(shared_x)
-                loss_shared = F.cross_entropy(pred_shared, shared_y)
-                loss = loss + float(self.options.get('fedfed_lambda_shared', 1.0)) * loss_shared
-
-        if not self.in_warmup and not bool(self.options.get('fedfed_two_stage', True)):
-            xs = self._sensitive_feature(X)
-            self._maybe_collect_upload_samples(xs, y)
+        shared_x1, shared_x2, shared_y = self._sample_shared_batch(X_train.size(0))
+        if shared_x1 is not None:
+            shared_x1 = _train_augment(shared_x1, bool(self.options.get('fedfed_use_augmentation', True)))
+            shared_x2 = _train_augment(shared_x2, bool(self.options.get('fedfed_use_augmentation', True)))
+            mixed_x = torch.cat([X_train, shared_x1, shared_x2], dim=0)
+            mixed_y = torch.cat([y, shared_y, shared_y], dim=0)
+            pred_mixed = self.model(mixed_x)
+            loss = F.cross_entropy(pred_mixed, mixed_y)
+            pred_local = pred_mixed[:X_train.size(0)]
         loss.backward()
         self.model_optimizer.step()
         return pred_local, loss.detach()
@@ -239,7 +314,43 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.model.eval()
         self.distill_classifier.train()
 
+    def set_distill_epoch(self, epoch):
+        self.distill_epoch = int(epoch)
+
+    def _aug_classifier_train_batch(self, X, y):
+        if not bool(self.options.get('fedfed_use_augmentation', True)):
+            return
+        X = _train_augment(X, True)
+        X, y_a, y_b, lam = _mixup_data(X, y, float(self.options.get('fedfed_mixup_alpha', 2.0)))
+        self.distill_optimizer.zero_grad()
+        for parameter in self.generator.parameters():
+            parameter.requires_grad_(False)
+        pred = self.distill_classifier(X)
+        loss = lam * F.cross_entropy(pred, y_a) + (1.0 - lam) * F.cross_entropy(pred, y_b)
+        loss.backward()
+        self.distill_optimizer.step()
+        for parameter in self.generator.parameters():
+            parameter.requires_grad_(True)
+
+    def _aug_vae_train_batch(self, X):
+        if not bool(self.options.get('fedfed_use_augmentation', True)) or X.size(0) < 4:
+            return
+        X = _train_augment(X, True)
+        mosaic_count = int(self.options.get('fedfed_mosaic_batch_size', 0))
+        aug_x = _mosaic_batch(X, mosaic_count)
+        self.distill_optimizer.zero_grad()
+        robust = self.generator(aug_x)
+        loss_recon = F.mse_loss(robust, aug_x)
+        kl_loss = self.generator.last_kl
+        loss = self._reconstruction_weight(self.distill_epoch) * loss_recon
+        if kl_loss is not None:
+            loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
+        loss.backward()
+        self.distill_optimizer.step()
+
     def distill_batch(self, X, y):
+        self._aug_classifier_train_batch(X, y)
+        self._aug_vae_train_batch(X)
         self.distill_optimizer.zero_grad()
         pred_sensitive, loss, stats = self._distill_objective(X, y)
         loss.backward()
@@ -248,7 +359,6 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             'fd_loss': float(stats['fd_loss'].detach().item()),
             'recon_loss': float(stats['recon_loss'].detach().item()),
             'x_ce_loss': float(stats['x_ce_loss'].detach().item()),
-            'rho_penalty': float(stats['rho_penalty'].detach().item()),
             'xs_norm': float(stats['xs_norm'].detach().item()),
             'kl_loss': float(stats['kl_loss'].detach().item()),
         }
@@ -285,6 +395,10 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         self.distill_classifier_state = None
         self.shared_by_class = {}
 
+    @property
+    def requires_pretraining(self):
+        return True
+
     def set_round_index(self, round_index):
         self.current_round = int(round_index)
 
@@ -292,14 +406,10 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         payload = {'round_index': self.current_round}
         if self.generator_state is not None:
             payload['generator_state'] = self.generator_state
-        warmup_rounds = int(self.options.get('fedfed_hard_warmup_rounds', 10))
-        shared_x, shared_y = self._flatten_shared_buffer()
-        shared_ready = (
-            bool(self.options.get('fedfed_two_stage', True))
-            or self.current_round >= warmup_rounds
-        )
-        if shared_ready and shared_y:
-            payload['shared_x'] = torch.stack(shared_x, dim=0)
+        shared_x1, shared_x2, shared_y = self._flatten_shared_buffer()
+        if shared_y:
+            payload['shared_x1'] = torch.stack(shared_x1, dim=0)
+            payload['shared_x2'] = torch.stack(shared_x2, dim=0)
             payload['shared_y'] = torch.tensor(shared_y, dtype=torch.long)
         return payload
 
@@ -322,8 +432,7 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         self._update_shared_buffer(local_model_paras_set, force=True)
 
     def aggregate_client_payloads(self, local_model_paras_set):
-        self._aggregate_generator(local_model_paras_set)
-        self._update_shared_buffer(local_model_paras_set)
+        return
 
     def _aggregate_generator(self, local_model_paras_set):
         state_sums = {}
@@ -376,16 +485,10 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         }
 
     def _update_shared_buffer(self, local_model_paras_set, force=False):
-        warmup_rounds = int(self.options.get('fedfed_hard_warmup_rounds', 10))
-        if not force and self.current_round < warmup_rounds:
-            return
-        max_size = int(self.options.get('fedfed_shared_buffer_size', 800))
-        if max_size <= 0:
-            self.shared_by_class = {}
-            return
-        per_class_size = int(self.options.get('fedfed_shared_per_class_size', 80))
+        max_size = int(self.options.get('fedfed_shared_buffer_size', 0))
+        per_class_size = int(self.options.get('fedfed_shared_per_class_size', 0))
         num_classes = max(int(self.options.get('fedfed_num_classes', 10)), 1)
-        if per_class_size <= 0:
+        if per_class_size <= 0 and max_size > 0:
             per_class_size = max(max_size // num_classes, 1)
         for update in local_model_paras_set:
             aux = update.get('aux')
@@ -396,19 +499,24 @@ class FedFedImageServerPlugin(BaseServerPlugin):
             for x_item, y_item in zip(xs, ys):
                 class_id = int(y_item.item())
                 bucket = self.shared_by_class.setdefault(class_id, [])
-                bucket.append(x_item.clone())
-                if len(bucket) > per_class_size:
+                # The paper uses two noisy views rx_noise1/rx_noise2. With noise disabled,
+                # both views are the same sensitive feature tensor.
+                bucket.append((x_item.clone(), x_item.clone()))
+                if per_class_size > 0 and len(bucket) > per_class_size:
                     del bucket[:len(bucket) - per_class_size]
-        self._trim_global_overflow(max_size)
+        if max_size > 0:
+            self._trim_global_overflow(max_size)
 
     def _flatten_shared_buffer(self):
-        shared_x = []
+        shared_x1 = []
+        shared_x2 = []
         shared_y = []
         for class_id in sorted(self.shared_by_class):
-            for x_item in self.shared_by_class[class_id]:
-                shared_x.append(x_item)
+            for x_item1, x_item2 in self.shared_by_class[class_id]:
+                shared_x1.append(x_item1)
+                shared_x2.append(x_item2)
                 shared_y.append(class_id)
-        return shared_x, shared_y
+        return shared_x1, shared_x2, shared_y
 
     def _trim_global_overflow(self, max_size):
         total = sum(len(bucket) for bucket in self.shared_by_class.values())

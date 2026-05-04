@@ -114,47 +114,41 @@ def input_options():
     parser.add_argument('--feature_bias_std', type=float, default=0.05,
                         help='Std of client-specific additive bias.')
 
-    # ---------- FedFed Feature Distillation Plugin (optional) ----------
-    parser.add_argument('--use_fedfed_plugin', type=str2bool, default=False,
-                        help='Enable FedFed-style feature distillation plugin.')
+    # ---------- FedFed image-space feature distillation plugin ----------
     parser.add_argument('--plugin_name', type=str, default='none',
-                        choices=['none', 'fedfed_prototype', 'fedfed_image'],
-                        help='Generic plugin selector. Prefer this over algorithm-specific toggles for new code.')
+                        choices=['none', 'fedfed_image'],
+                        help='Plugin selector. Use none for FedAvg and fedfed_image for FedAvg+FedFed.')
     parser.add_argument('--fedfed_input_channels', type=int, default=3,
                         help='Input channels used by image-space FedFed generator.')
     parser.add_argument('--fedfed_lambda_fd', type=float, default=2.0,
                         help='Weight of CE(f(x - q(x)), y) for image-space FedFed feature distillation.')
-    parser.add_argument('--fedfed_lambda_norm', type=float, default=0.001,
-                        help='Weight of the ||x - q(x)||^2 penalty for image-space FedFed.')
-    parser.add_argument('--fedfed_lambda_shared', type=float, default=0.2,
-                        help='Weight of CE on server-shared performance-sensitive features.')
     parser.add_argument('--fedfed_two_stage', type=str2bool, default=True,
                         help='Run paper-style FedFed: feature distillation first, then FedAvg over local plus shared features.')
     parser.add_argument('--fedfed_distill_rounds', type=int, default=15,
                         help='Communication rounds used for the feature distillation stage.')
     parser.add_argument('--fedfed_distill_local_epoch', type=int, default=1,
                         help='Local epochs used in each feature distillation round.')
-    parser.add_argument('--fedfed_rho', type=float, default=0.3,
-                        help='Relative norm budget rho for ||x_s|| <= rho * ||x|| in feature distillation.')
-    parser.add_argument('--fedfed_lambda_rho', type=float, default=10.0,
-                        help='Hinge penalty weight for violating the rho norm budget before clipping.')
-    parser.add_argument('--fedfed_formal_online_distill', type=str2bool, default=False,
-                        help='If false in two-stage mode, formal FedAvg only uses CE(x) and CE(shared_x_s).')
-    parser.add_argument('--fedfed_hard_warmup_rounds', type=int, default=10,
-                        help='Rounds used only for feature distillation before uploading/using shared x_s.')
     parser.add_argument('--fedfed_vae_latent_channels', type=int, default=32,
                         help='Latent channel width of the image-space beta-VAE generator.')
     parser.add_argument('--fedfed_vae_z_dim', type=int, default=2048,
                         help='Flattened latent dimension used by the paper beta-VAE generator.')
     parser.add_argument('--fedfed_generator_type', type=str, default='paper_beta_vae',
-                        choices=['beta_vae', 'paper_beta_vae', 'resnet', 'autoencoder'],
+                        choices=['paper_beta_vae'],
                         help='Image-space generator type used for q(x).')
     parser.add_argument('--fedfed_lambda_recon', type=float, default=5.0,
                         help='Weight of reconstruction loss that keeps q(x) close to x.')
+    parser.add_argument('--fedfed_vae_curriculum', type=str2bool, default=True,
+                        help='Use FedFed paper curriculum: early reconstruction weight is 10 * VAE_re.')
     parser.add_argument('--fedfed_beta_kl', type=float, default=0.005,
                         help='KL weight for the beta-VAE generator.')
     parser.add_argument('--fedfed_lambda_x_ce', type=float, default=0.4,
                         help='Weight of CE(f(x), y) used by the paper FedFed VAE objective.')
+    parser.add_argument('--fedfed_use_augmentation', type=str2bool, default=True,
+                        help='Use paper-style VAE-stage augmentation: crop/flip, mixup classifier warmup, and mosaic VAE warmup.')
+    parser.add_argument('--fedfed_mixup_alpha', type=float, default=2.0,
+                        help='Mixup alpha used when training the distillation classifier in the VAE stage.')
+    parser.add_argument('--fedfed_mosaic_batch_size', type=int, default=64,
+                        help='Number of mosaic samples generated per VAE augmentation batch. 0 means use current batch size.')
     parser.add_argument('--fedfed_distill_optimizer', type=str, default='adamw',
                         choices=['adamw', 'sgd', 'adam'],
                         help='Optimizer for the feature distillation classifier and generator.')
@@ -162,81 +156,18 @@ def input_options():
                         help='Learning rate for the feature distillation optimizer.')
     parser.add_argument('--fedfed_distill_weight_decay', type=float, default=1e-6,
                         help='Weight decay for the feature distillation optimizer.')
-    parser.add_argument('--fedfed_shared_mix_mode', type=str, default='concat',
-                        choices=['concat', 'loss'],
-                        help='How formal FedAvg consumes D_k and shared D_s: concat approximates D_k union D_s.')
-    parser.add_argument('--fedfed_upload_per_class', type=int, default=20,
-                        help='Max sensitive samples uploaded by one client for each class in one round.')
-    parser.add_argument('--fedfed_upload_per_client', type=int, default=200,
-                        help='Max sensitive samples uploaded by one client in one round.')
-    parser.add_argument('--fedfed_shared_buffer_size', type=int, default=4000,
-                        help='Max number of server-side shared sensitive samples.')
-    parser.add_argument('--fedfed_shared_per_class_size', type=int, default=400,
-                        help='Max server-side shared sensitive samples kept per class by FIFO.')
-    parser.add_argument('--fedfed_shared_batch_size', type=int, default=256,
-                        help='Batch size sampled from the shared sensitive feature buffer.')
-    parser.add_argument('--fedfed_generator_weight_decay', type=float, default=0.0,
-                        help='Weight decay for image-space FedFed generator optimizer.')
-    parser.add_argument('--fedfed_sensitive_dim', type=int, default=64,
-                        help='Dimension of performance-sensitive feature z_s (shared).')
-    parser.add_argument('--fedfed_feature_dim', type=int, default=512,
-                        help='Dimension of model intermediate feature h (e.g. mnist_cnn fc1 output).')
-    parser.add_argument('--fedfed_clip_norm', type=float, default=1.0,
-                        help='L2 clip norm for z_s before adding noise (privacy).')
-    parser.add_argument('--fedfed_noise_sigma', type=float, default=0.1,
-                        help='Gaussian noise std for z_s (privacy).')
-    parser.add_argument('--fedfed_lambda_distill', type=float, default=1.0,
-                        help='Weight of feature distillation loss L_distill.')
-    parser.add_argument('--fedfed_distill_warmup_rounds', type=int, default=3,
-                        help='Warm up prototype distillation over the first few communication rounds.')
-    parser.add_argument('--fedfed_distill_count_tau', type=float, default=8.0,
-                        help='Reliability temperature for local/global class counts in prototype distillation.')
-    parser.add_argument('--fedfed_prototype_momentum', type=float, default=0.8,
-                        help='EMA momentum for server-side global prototype updates. Higher is smoother.')
-    parser.add_argument('--fedfed_use_cosine_distill', type=str2bool, default=True,
-                        help='Whether to align prototypes with cosine distance instead of raw MSE.')
-    parser.add_argument('--fedfed_normalize_prototypes', type=str2bool, default=True,
-                        help='Whether to L2-normalize prototypes before sharing and distillation.')
-    parser.add_argument('--fedfed_enable_projection', type=str2bool, default=True,
-                        help='Whether to use the low-dimensional projection module before prototype sharing.')
-    parser.add_argument('--fedfed_enable_prototype_sharing', type=str2bool, default=True,
-                        help='Whether to upload, aggregate, and broadcast class prototypes across clients.')
-    parser.add_argument('--fedfed_enable_distill', type=str2bool, default=True,
-                        help='Whether to apply prototype distillation loss during local training.')
-    parser.add_argument('--fedfed_enable_anchor', type=str2bool, default=True,
-                        help='Whether to anchor local features to the round-start model features.')
-    parser.add_argument('--fedfed_lambda_anchor', type=float, default=0.1,
-                        help='Weight of the local feature anchor loss.')
-    parser.add_argument('--fedfed_anchor_epoch_scaling', type=str2bool, default=False,
-                        help='Scale anchor weight by local training intensity.')
-    parser.add_argument('--fedfed_anchor_ref_epoch', type=float, default=5.0,
-                        help='Local epoch value at which epoch-scaled anchor reaches fedfed_lambda_anchor_max.')
-    parser.add_argument('--fedfed_enable_proto_cls', type=str2bool, default=False,
-                        help='Apply cross-entropy classification loss on local backbone class prototypes.')
-    parser.add_argument('--fedfed_lambda_proto_cls', type=float, default=0.1,
-                        help='Weight of prototype classification loss.')
-    parser.add_argument('--fedfed_enable_clip', type=str2bool, default=False,
-                        help='Whether to clip prototype norm before upload.')
-    parser.add_argument('--fedfed_enable_noise', type=str2bool, default=False,
-                        help='Whether to add Gaussian noise to uploaded prototypes.')
-    parser.add_argument('--fedfed_adaptive_control', type=str2bool, default=False,
-                        help='Adapt distillation and anchor strengths from prototype quality and client drift signals.')
-    parser.add_argument('--fedfed_lambda_distill_max', type=float, default=1.0,
-                        help='Maximum distillation weight used by adaptive control.')
-    parser.add_argument('--fedfed_lambda_anchor_max', type=float, default=0.1,
-                        help='Maximum anchor weight used by adaptive control.')
-    parser.add_argument('--fedfed_proto_stability_threshold', type=float, default=0.90,
-                        help='Prototype cosine-stability threshold that marks server prototypes as reliable.')
-    parser.add_argument('--fedfed_proto_coverage_threshold', type=float, default=0.80,
-                        help='Reliable class coverage threshold that marks server prototypes as sufficiently complete.')
-    parser.add_argument('--fedfed_adaptive_ramp_rounds', type=int, default=3,
-                        help='Rounds used to ramp adaptive distillation after prototype quality becomes reliable.')
-    parser.add_argument('--fedfed_anchor_drift_threshold', type=float, default=0.08,
-                        help='Feature drift threshold above which adaptive anchor becomes active.')
-    parser.add_argument('--fedfed_anchor_drift_slope', type=float, default=50.0,
-                        help='Slope of the sigmoid gate used by adaptive anchor control.')
+    parser.add_argument('--fedfed_upload_per_class', type=int, default=0,
+                        help='Max sensitive samples uploaded by one client for each class. 0 means full dataset.')
+    parser.add_argument('--fedfed_upload_per_client', type=int, default=0,
+                        help='Max sensitive samples uploaded by one client. 0 means full dataset.')
+    parser.add_argument('--fedfed_shared_buffer_size', type=int, default=0,
+                        help='Max server-side shared sensitive samples. 0 means full shared dataset.')
+    parser.add_argument('--fedfed_shared_per_class_size', type=int, default=0,
+                        help='Max server-side shared samples per class. 0 means no FIFO truncation.')
+    parser.add_argument('--fedfed_shared_batch_size', type=int, default=0,
+                        help='Batch size sampled for each shared view. 0 means match local batch size.')
     parser.add_argument('--fedfed_num_classes', type=int, default=10,
-                        help='Number of classes used to estimate prototype coverage.')
+                        help='Number of dataset classes.')
     parser.add_argument('--diagnostic_epochs', type=int, default=10,
                         help='Epochs per classifier in x/x_s/x_r diagnostic evaluation.')
     parser.add_argument('--diagnostic_train_limit', type=int, default=20000,
@@ -253,7 +184,6 @@ def input_options():
         options['partition_strategy'] = 'iid'
     if str(options['dataset_name']).lower() in {'cifar10', 'cifar-10'} and options['model_name'] == 'mnist_cnn':
         options['model_name'] = 'cifar_resnet18'
-        options['fedfed_feature_dim'] = 512
 
     return options
 

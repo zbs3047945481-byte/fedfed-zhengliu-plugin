@@ -20,7 +20,7 @@ Usage:
   ./scripts/run_windows_experiment.sh [--run-id RUN_ID] [--preset PRESET] [--skip-deploy] [--tail-lines N] -- <main.py args...>
 
 Presets:
-  plugin-smoke   1-round MNIST smoke run with fedfed_prototype on GPU
+  plugin-smoke   1-round MNIST smoke run with FedFed image plugin on GPU
   fedavg-smoke   1-round MNIST smoke run with plain FedAvg on GPU
 EOF
 }
@@ -40,7 +40,9 @@ preset_args() {
         --dirichlet_alpha 0.3 \
         --enable_quantity_skew true \
         --enable_feature_skew true \
-        --plugin_name fedfed_prototype
+        --plugin_name fedfed_image \
+        --fedfed_distill_rounds 1 \
+        --fedfed_distill_local_epoch 1
       ;;
     fedavg-smoke)
       printf '%s\n' \

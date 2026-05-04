@@ -133,7 +133,6 @@ function Run-One(\$name, \$pluginName) {
   if (\$pluginName -eq 'fedfed_image') {
     \$trainArgs += @(
       '--fedfed_two_stage', 'true',
-      '--fedfed_formal_online_distill', 'false',
       '--fedfed_generator_type', 'paper_beta_vae',
       '--fedfed_vae_latent_channels', '32',
       '--fedfed_vae_z_dim', '2048',
@@ -146,15 +145,11 @@ function Run-One(\$name, \$pluginName) {
       '--fedfed_lambda_fd', '2.0',
       '--fedfed_beta_kl', '0.005',
       '--fedfed_lambda_x_ce', '0.4',
-      '--fedfed_rho', '0.4',
-      '--fedfed_lambda_rho', '10',
-      '--fedfed_upload_per_class', '100',
-      '--fedfed_upload_per_client', '1000',
-      '--fedfed_shared_buffer_size', '20000',
-      '--fedfed_shared_per_class_size', '2000',
-      '--fedfed_shared_batch_size', '64',
-      '--fedfed_shared_mix_mode', 'concat',
-      '--fedfed_lambda_shared', '1.0'
+      '--fedfed_upload_per_class', '0',
+      '--fedfed_upload_per_client', '0',
+      '--fedfed_shared_buffer_size', '0',
+      '--fedfed_shared_per_class_size', '0',
+      '--fedfed_shared_batch_size', '0'
     )
   }
 

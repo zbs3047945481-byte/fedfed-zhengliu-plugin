@@ -88,18 +88,19 @@ try {
     '--fedfed_lambda_fd', '2.0',
     '--fedfed_beta_kl', '0.005',
     '--fedfed_lambda_x_ce', '0.4',
+    '--fedfed_use_augmentation', 'true',
+    '--fedfed_mixup_alpha', '2.0',
+    '--fedfed_mosaic_batch_size', '64',
     '--fedfed_distill_rounds', '15',
     '--fedfed_distill_local_epoch', '1',
-    '--fedfed_rho', '0.4',
-    '--fedfed_lambda_rho', '10',
     '--diagnostic_epochs', '10',
     '--diagnostic_train_limit', '20000',
     '--diagnostic_test_limit', '10000',
     '--experiment_tag', \$prefix
   )
-  & \$pythonPath '-u' 'scripts\\run_fedfed_xs_diagnostic.py' @args 1> \$stdoutPath 2> \$stderrPath
-  if (\$LASTEXITCODE -ne 0) {
-    throw "Diagnostic failed with exit code \$LASTEXITCODE"
+  \$process = Start-Process -FilePath \$pythonPath -ArgumentList (@('-u', 'scripts\\run_fedfed_xs_diagnostic.py') + \$args) -WorkingDirectory \$projectPath -RedirectStandardOutput \$stdoutPath -RedirectStandardError \$stderrPath -NoNewWindow -PassThru -Wait
+  if (\$process.ExitCode -ne 0) {
+    throw "Diagnostic failed with exit code \$(\$process.ExitCode)"
   }
   Write-Status 'succeeded' 'FedFed x/x_s/x_r diagnostic finished.'
 } catch {

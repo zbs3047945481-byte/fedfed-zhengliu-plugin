@@ -88,9 +88,11 @@ class BaseClient():
         self.model.train()
         self.plugin.on_distill_start(self.optimizer.param_groups[0]['lr'], payload)
         train_loss = train_acc = train_total = 0
-        fd_loss_sum = recon_loss_sum = x_ce_loss_sum = rho_penalty_sum = xs_norm_sum = kl_loss_sum = 0.0
+        fd_loss_sum = recon_loss_sum = x_ce_loss_sum = xs_norm_sum = kl_loss_sum = 0.0
         local_epoch = int(self.options.get('fedfed_distill_local_epoch', 1))
-        for _ in range(local_epoch):
+        for epoch in range(1, local_epoch + 1):
+            if hasattr(self.plugin, 'set_distill_epoch'):
+                self.plugin.set_distill_epoch(epoch)
             for X, y in loader:
                 if self.gpu:
                     X = X.to(self.device, non_blocking=pin_memory)
@@ -103,7 +105,6 @@ class BaseClient():
                 fd_loss_sum += float(distill_stats.get('fd_loss', 0.0)) * y.size(0)
                 recon_loss_sum += float(distill_stats.get('recon_loss', 0.0)) * y.size(0)
                 x_ce_loss_sum += float(distill_stats.get('x_ce_loss', 0.0)) * y.size(0)
-                rho_penalty_sum += float(distill_stats.get('rho_penalty', 0.0)) * y.size(0)
                 xs_norm_sum += float(distill_stats.get('xs_norm', 0.0)) * y.size(0)
                 kl_loss_sum += float(distill_stats.get('kl_loss', 0.0)) * y.size(0)
                 train_total += y.size(0)
@@ -119,7 +120,6 @@ class BaseClient():
             "fd_loss": fd_loss_sum / max(train_total, 1),
             "recon_loss": recon_loss_sum / max(train_total, 1),
             "x_ce_loss": x_ce_loss_sum / max(train_total, 1),
-            "rho_penalty": rho_penalty_sum / max(train_total, 1),
             "xs_norm": xs_norm_sum / max(train_total, 1),
             "kl_loss": kl_loss_sum / max(train_total, 1),
         }

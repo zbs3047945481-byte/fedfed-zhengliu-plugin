@@ -32,7 +32,7 @@ done
 
 if [[ ${#EXTRA_ARGS[@]} -eq 0 ]]; then
   echo "No training arguments supplied." >&2
-  echo "Example: $0 -- --round_num 1 --num_of_clients 5 --c_fraction 0.4 --local_epoch 1 --batch_size 64 --gpu true --dataset_name mnist --partition_strategy dirichlet --dirichlet_alpha 0.3 --enable_quantity_skew true --enable_feature_skew true --plugin_name fedfed_prototype" >&2
+  echo "Example: $0 -- --round_num 1 --num_of_clients 5 --c_fraction 0.4 --local_epoch 1 --batch_size 64 --gpu true --dataset_name mnist --partition_strategy dirichlet --dirichlet_alpha 0.3 --enable_quantity_skew true --enable_feature_skew true --plugin_name fedfed_image" >&2
   exit 1
 fi
 

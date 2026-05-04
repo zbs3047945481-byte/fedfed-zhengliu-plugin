@@ -34,10 +34,9 @@ class FedAvgTrainer(BaseFederated):
         )
         plugin_name = resolve_plugin_name(options)
         if plugin_name is not None:
-            print('>>> Plugin ENABLED ({}, lambda_fd={}, lambda_shared={}, shared_buffer={})'.format(
+            print('>>> Plugin ENABLED ({}, lambda_fd={}, shared_buffer={})'.format(
                 plugin_name,
                 options.get('fedfed_lambda_fd', 1.0),
-                options.get('fedfed_lambda_shared', 1.0),
                 options.get('fedfed_shared_buffer_size', 800)))
 
     def train(self):
@@ -100,7 +99,7 @@ class FedAvgTrainer(BaseFederated):
     def _maybe_run_fedfed_two_stage(self):
         if self.server_plugin is None:
             return
-        if self.options.get('plugin_name') != 'fedfed_image':
+        if not bool(getattr(self.server_plugin, 'requires_pretraining', False)):
             return
         if not bool(self.options.get('fedfed_two_stage', True)):
             return
@@ -120,12 +119,11 @@ class FedAvgTrainer(BaseFederated):
                 update, stat = client.plugin_feature_distill(payload)
                 local_updates.append(update)
                 print("Distill: {:>2d} | CID: {: >3d} ({:>2d}/{:>2d})| "
-                      "Loss {:>.4f} | L_fd {:>.4f} | Recon {:>.4f} | Rho {:>.4f} | "
+                      "Loss {:>.4f} | L_fd {:>.4f} | Recon {:>.4f} | "
                       "xs_norm {:>.4f} | Acc {:>5.2f}% | Time: {:>.2f}s ".format(
                        round_i, client.id, i, len(selected_clients),
                        stat['loss'], stat.get('fd_loss', 0.0),
-                       stat.get('recon_loss', 0.0),
-                       stat.get('rho_penalty', 0.0), stat.get('xs_norm', 0.0),
+                       stat.get('recon_loss', 0.0), stat.get('xs_norm', 0.0),
                        stat['acc'] * 100, stat['time'], ))
             self.server_plugin.aggregate_generator_states(local_updates)
 

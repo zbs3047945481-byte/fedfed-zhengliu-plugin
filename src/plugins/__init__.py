@@ -1,28 +1,19 @@
-#插件注册表 / 解析入口 / 工厂入口
-
 from src.plugins.base import BaseClientPlugin, BaseServerPlugin
-from src.plugins.fedfed_plugin import FedFedClientPlugin, FedFedServerPlugin
 from src.plugins.fedfed_image_plugin import FedFedImageClientPlugin, FedFedImageServerPlugin
 
 
 PLUGIN_REGISTRY = {
-    'fedfed_prototype': {
-        'client': FedFedClientPlugin,
-        'server': FedFedServerPlugin,
-    },
     'fedfed_image': {
         'client': FedFedImageClientPlugin,
         'server': FedFedImageServerPlugin,
     },
 }
 
-#负责把配置解析成最终插件名
+
 def resolve_plugin_name(options):
     plugin_name = options.get('plugin_name', 'none')
     if plugin_name != 'none':
         return plugin_name
-    if options.get('use_fedfed_plugin', False):
-        return 'fedfed_image'
     return None
 
 
@@ -47,8 +38,6 @@ def build_server_plugin(options, gpu):
 __all__ = [
     'BaseClientPlugin',
     'BaseServerPlugin',
-    'FedFedClientPlugin',
-    'FedFedServerPlugin',
     'FedFedImageClientPlugin',
     'FedFedImageServerPlugin',
     'build_client_plugin',
