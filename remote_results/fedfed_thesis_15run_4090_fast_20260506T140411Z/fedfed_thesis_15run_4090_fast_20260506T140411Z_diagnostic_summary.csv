@@ -1,0 +1,2 @@
+duration_min,experiment_id,group,method,metrics_path,plugin_name,run_id,status,x_plus_xs_to_x,x_to_x,xr_to_xr,xs_to_xs
+17.77,diagnostic_x_xs_xr,diagnostic,FedFedDiagnostic,/root/FedFed-thesis-suite/result/cifar10/fedfed_xs_diagnostic_fedfed_thesis_15run_4090_fast_20260506T140411Z_diagnostic_x_xs_xr/diagnostic_metrics.json,fedfed_image,fedfed_thesis_15run_4090_fast_20260506T140411Z_diagnostic_x_xs_xr,succeeded,,,,

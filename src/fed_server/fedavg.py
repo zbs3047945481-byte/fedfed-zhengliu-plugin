@@ -4,8 +4,7 @@
 
 
 from src.fed_server.fedbase import BaseFederated
-from torch import optim
-from src.optimizers.adam import MyAdam
+from src.optimizers.build import adjust_main_learning_rate, build_main_optimizer
 import numpy as np
 from src.models.models import choose_model
 from src.plugins import resolve_plugin_name
@@ -20,8 +19,7 @@ class FedAvgTrainer(BaseFederated):
         model_builder = lambda: choose_model(options)
         self.move_model_to_gpu(model, options)
 
-        #使用自定义Adam，本质等价于 torch.optim.Adam，这个优化器会被传给客户端用于本地训练
-        optimizer_builder = lambda params: MyAdam(params, lr=options['lr'])
+        optimizer_builder = lambda params: build_main_optimizer(params, options)
         self.optimizer = optimizer_builder(model.parameters())
         super(FedAvgTrainer, self).__init__(
             options,
@@ -67,8 +65,7 @@ class FedAvgTrainer(BaseFederated):
             #得到新的全局模型参数
             self.latest_global_model = self.aggregate_parameters(local_model_paras_set)
 
-            #根据轮数调整学习率；不是FedAvg必需步骤；但有助于收敛稳定
-            self.optimizer.adjust_learning_rate(round_i)
+            adjust_main_learning_rate(self.optimizer, round_i, self.options)
 
         #最后一轮测试，把所有指标写入文件
         if not stopped_early:

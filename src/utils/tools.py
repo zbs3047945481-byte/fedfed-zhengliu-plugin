@@ -46,8 +46,8 @@ def resolve_heterogeneity_options(options=None):
     alpha = float(options.get('dirichlet_alpha', 0.3))
     alpha = max(alpha, 1e-6)
 
-    # Use one alpha to control all heterogeneity sources:
-    # smaller alpha => stronger label skew, stronger quantity skew, stronger feature shift.
+    # Keep old option compatibility. The paper-style LDA partition no longer
+    # uses quantity_skew_beta inside Dirichlet splits.
     options['quantity_skew_beta'] = alpha
 
     feature_anchor = max(float(options.get('feature_alpha_anchor', 0.1)), 1e-6)
@@ -117,30 +117,41 @@ def _build_iid_partition(train_labels, client_num, min_samples, enable_quantity_
     return _split_by_counts(shuffled_indices, counts)
 
 #模拟label skew和quantity skew两种数据异质性
-def _build_dirichlet_partition_once(labels, client_num, alpha, enable_quantity_skew, quantity_skew_beta):
-    assignments = [[] for _ in range(client_num)] #长度为client_num的列表，每个元素是一个空列表，用来存放每个客户端的数据索引
-    client_activity = np.ones(client_num, dtype=float) #ones：创建一个全是1的数组，dtype=float：指定数组元素类型为浮点数
-    if enable_quantity_skew: #是否允许不同客户端间样本数量不一致
-        client_activity = np.random.dirichlet(np.full(client_num, quantity_skew_beta))#创建一个长度为 client_num、每个元素都等于quantity_skew_beta的数组。
-#dirichlet两个约束：所有值不可为负；所有值加和为1。
-
-    for cls in np.unique(labels): #每次处理一类，np.unique()：返回数组中所有不重复的值，并按升序排列。
-        class_indices = np.where(labels == cls)[0] #np.where()：返回数组中满足条件的元素的索引。
-        np.random.shuffle(class_indices) #原地打乱数组顺序
-        class_weights = np.random.dirichlet(np.full(client_num, alpha)) #为“当前这个类别”随机生成一个客户端分配比例。label skew核心
-        class_weights = class_weights * client_activity #label skew和quantity skew融合起来
-        class_weights = class_weights / class_weights.sum() #上一步打乱了和为1，重新归一化，使其和为1
-        split_points = (np.cumsum(class_weights) * len(class_indices)).astype(int)[:-1] #np.cumsum()：返回数组中每个元素的累积和。
-#sequence[start:stop:step]  start：从哪里开始；stop：到哪里结束，不含stop本身；step：步长。-1表示最后一个元素
-        #astype(int)：将结果转换为整数类型。[:-1]：去掉最后一个元素。 这一行的目的就是：把比例转换成切分位置
-        splits = np.split(class_indices, split_points) #np.split()：将数组分割为多个子数组。
-        for client_id, split in enumerate(splits): #enumerate()：返回索引和对应的值。
-            assignments[client_id].extend(split.tolist()) #tolist()：将NumPy数组转换为Python列表。
+def _build_dirichlet_partition_once(labels, client_num, alpha, enable_quantity_skew,
+                                    dirichlet_balance=False, dirichlet_min_p=None):
+    assignments = [[] for _ in range(client_num)]
+    total_num = len(labels)
+    for cls in np.unique(labels):
+        class_indices = np.where(labels == cls)[0]
+        np.random.shuffle(class_indices)
+        class_weights = np.random.dirichlet(np.repeat(alpha, client_num))
+        if dirichlet_balance:
+            sorted_by_weight = np.argsort(class_weights, axis=0)
+            if cls != 0:
+                used_counts = np.array([len(items) for items in assignments])
+                sorted_by_usage = np.argsort(used_counts, axis=0)
+                class_weights[sorted_by_usage] = class_weights[sorted_by_weight[::-1]]
+        elif enable_quantity_skew:
+            class_weights = np.array([
+                weight * (len(items) < total_num / client_num)
+                for weight, items in zip(class_weights, assignments)
+            ])
+        if dirichlet_min_p is not None:
+            class_weights += float(dirichlet_min_p)
+        class_weights = class_weights / class_weights.sum()
+        split_points = (np.cumsum(class_weights) * len(class_indices)).astype(int)[:-1]
+        splits = np.split(class_indices, split_points)
+        for client_id, split in enumerate(splits):
+            assignments[client_id].extend(split.tolist())
     return assignments
 
 
-def _build_dirichlet_partition(train_labels, client_num, alpha, min_samples, enable_quantity_skew, quantity_skew_beta):
+def _build_dirichlet_partition(train_labels, client_num, alpha, min_samples, enable_quantity_skew,
+                               quantity_skew_beta, dirichlet_balance=False, dirichlet_min_p=None):
     labels = np.asarray(train_labels) #np.asarray() 将输入转换为NumPy数组
+    class_num = len(np.unique(labels))
+    paper_min_samples = class_num if enable_quantity_skew else min_samples
+    min_required = max(int(min_samples), int(paper_min_samples))
     max_retries = 100
     for _ in range(max_retries):
         assignments = _build_dirichlet_partition_once(
@@ -148,15 +159,18 @@ def _build_dirichlet_partition(train_labels, client_num, alpha, min_samples, ena
             client_num,
             alpha,
             enable_quantity_skew,
-            quantity_skew_beta,
+            dirichlet_balance=dirichlet_balance,
+            dirichlet_min_p=dirichlet_min_p,
         )
-        if min_samples <= 0 or min(len(items) for items in assignments) >= min_samples: #没最小标准或者所有项都达标
+        if min_required <= 0 or min(len(items) for items in assignments) >= min_required:
+            for items in assignments:
+                np.random.shuffle(items)
             return assignments
 
     raise ValueError(
         'Failed to build a Dirichlet partition satisfying min_samples_per_client={} '
         'after {} retries. Consider increasing dirichlet_alpha, reducing min_samples_per_client, '
-        'or reducing num_of_clients.'.format(min_samples, max_retries)
+        'or reducing num_of_clients.'.format(min_required, max_retries)
     )
 
 
@@ -184,6 +198,8 @@ def get_each_client_data_index(train_labels, client_num, options=None):
             min_samples,
             enable_quantity_skew,
             quantity_skew_beta,
+            dirichlet_balance=options.get('dirichlet_balance', False),
+            dirichlet_min_p=options.get('dirichlet_min_p', None),
         )
 
     raise ValueError('Unsupported partition strategy: {}'.format(strategy))

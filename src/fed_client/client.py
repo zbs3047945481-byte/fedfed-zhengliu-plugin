@@ -88,7 +88,7 @@ class BaseClient():
         self.model.train()
         self.plugin.on_distill_start(self.optimizer.param_groups[0]['lr'], payload)
         train_loss = train_acc = train_total = 0
-        fd_loss_sum = recon_loss_sum = x_ce_loss_sum = xs_norm_sum = kl_loss_sum = 0.0
+        fd_loss_sum = recon_loss_sum = x_ce_loss_sum = align_loss_sum = logit_align_loss_sum = xs_norm_sum = kl_loss_sum = 0.0
         local_epoch = int(self.options.get('fedfed_distill_local_epoch', 1))
         for epoch in range(1, local_epoch + 1):
             if hasattr(self.plugin, 'set_distill_epoch'):
@@ -105,6 +105,8 @@ class BaseClient():
                 fd_loss_sum += float(distill_stats.get('fd_loss', 0.0)) * y.size(0)
                 recon_loss_sum += float(distill_stats.get('recon_loss', 0.0)) * y.size(0)
                 x_ce_loss_sum += float(distill_stats.get('x_ce_loss', 0.0)) * y.size(0)
+                align_loss_sum += float(distill_stats.get('align_loss', 0.0)) * y.size(0)
+                logit_align_loss_sum += float(distill_stats.get('logit_align_loss', 0.0)) * y.size(0)
                 xs_norm_sum += float(distill_stats.get('xs_norm', 0.0)) * y.size(0)
                 kl_loss_sum += float(distill_stats.get('kl_loss', 0.0)) * y.size(0)
                 train_total += y.size(0)
@@ -120,6 +122,8 @@ class BaseClient():
             "fd_loss": fd_loss_sum / max(train_total, 1),
             "recon_loss": recon_loss_sum / max(train_total, 1),
             "x_ce_loss": x_ce_loss_sum / max(train_total, 1),
+            "align_loss": align_loss_sum / max(train_total, 1),
+            "logit_align_loss": logit_align_loss_sum / max(train_total, 1),
             "xs_norm": xs_norm_sum / max(train_total, 1),
             "kl_loss": kl_loss_sum / max(train_total, 1),
         }
@@ -208,7 +212,7 @@ class BaseClient():
         self._move_optimizer_state(self.optimizer, self.storage_device)
         if self.plugin is not None and hasattr(self.plugin, 'to_device'):
             self.plugin.to_device(self.storage_device)
-        if self.gpu and self.device.type == 'cuda':
+        if self.gpu and self.device.type == 'cuda' and bool(self.options.get('client_empty_cache', True)):
             torch.cuda.empty_cache()
 
     @staticmethod

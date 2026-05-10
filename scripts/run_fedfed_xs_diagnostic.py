@@ -1,11 +1,12 @@
 import json
+import numpy as np
 import os
 import sys
 import time
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -25,8 +26,27 @@ from src.utils.tools import (
 )
 
 
+def add_feature_noise(x, options):
+    noise_type = str(options.get('fedfed_noise_type', 'none')).lower()
+    if noise_type in {'none', '', 'off'}:
+        return x
+    std = float(options.get('fedfed_noise_std1', 0.0) or 0.0)
+    mean = float(options.get('fedfed_noise_mean', 0.0) or 0.0)
+    if std <= 0:
+        return x
+    if noise_type == 'gaussian':
+        return x + torch.randn_like(x) * std + mean
+    if noise_type == 'laplace':
+        dist = torch.distributions.Laplace(
+            torch.full_like(x, mean),
+            torch.full_like(x, std),
+        )
+        return x + dist.sample()
+    return x
+
+
 @torch.no_grad()
-def transform_dataset(data, labels, generator, mode, device, batch_size, limit):
+def transform_dataset(data, labels, generator, mode, device, batch_size, limit, options):
     if limit > 0:
         data = data[:limit]
         labels = labels[:limit]
@@ -44,6 +64,8 @@ def transform_dataset(data, labels, generator, mode, device, batch_size, limit):
         else:
             xr = generator(x)
             xs = x - xr
+            if mode == 'xs':
+                xs = add_feature_noise(xs, options)
             z = xs if mode == 'xs' else xr
         xs_out.append(z.cpu())
         y_out.append(y)
@@ -113,6 +135,16 @@ def train_classifier(options, train_ds, test_ds, device, mode):
     }
 
 
+def concat_client_indices(client_indices, client_ids):
+    selected = []
+    for client_id in client_ids:
+        if client_id < len(client_indices):
+            selected.extend(list(client_indices[client_id]))
+    if not selected:
+        return np.array([], dtype=np.int64)
+    return np.array(selected, dtype=np.int64)
+
+
 def main():
     options = input_options()
     options = resolve_heterogeneity_options(options)
@@ -145,15 +177,56 @@ def main():
     batch_size = int(options['batch_size'])
     train_limit = int(options.get('diagnostic_train_limit', 20000))
     test_limit = int(options.get('diagnostic_test_limit', 10000))
-    results = []
+    train_sets = {}
+    test_sets = {}
     for mode in ('x', 'xs', 'xr'):
-        train_ds = transform_dataset(
-            dataset.train_data, dataset.train_label, generator, mode, device, batch_size, train_limit
+        train_sets[mode] = transform_dataset(
+            dataset.train_data, dataset.train_label, generator, mode, device, batch_size, train_limit, options
         )
-        test_ds = transform_dataset(
-            dataset.test_data, dataset.test_label, generator, mode, device, batch_size, test_limit
+        test_sets[mode] = transform_dataset(
+            dataset.test_data, dataset.test_label, generator, mode, device, batch_size, test_limit, options
         )
-        results.append(train_classifier(options, train_ds, test_ds, device, mode))
+
+    results = [
+        train_classifier(options, train_sets['x'], test_sets['x'], device, 'x_to_x'),
+        train_classifier(options, train_sets['xs'], test_sets['xs'], device, 'xs_to_xs'),
+        train_classifier(options, train_sets['xr'], test_sets['xr'], device, 'xr_to_xr'),
+        train_classifier(options, train_sets['xs'], test_sets['x'], device, 'xs_to_x'),
+        train_classifier(options, ConcatDataset([train_sets['x'], train_sets['xs']]), test_sets['x'], device, 'x_plus_xs_to_x'),
+    ]
+
+    holdout_train_clients = list(range(min(16, len(client_indices))))
+    holdout_test_clients = list(range(16, min(20, len(client_indices))))
+    if holdout_train_clients and holdout_test_clients:
+        train_client_idx = concat_client_indices(client_indices, holdout_train_clients)
+        test_client_idx = concat_client_indices(client_indices, holdout_test_clients)
+        client_train_ds = transform_dataset(
+            dataset.train_data[train_client_idx],
+            dataset.train_label[train_client_idx],
+            generator,
+            'xs',
+            device,
+            batch_size,
+            train_limit,
+            options,
+        )
+        client_test_ds = transform_dataset(
+            dataset.train_data[test_client_idx],
+            dataset.train_label[test_client_idx],
+            generator,
+            'xs',
+            device,
+            batch_size,
+            test_limit,
+            options,
+        )
+        results.append(train_classifier(
+            options,
+            client_train_ds,
+            client_test_ds,
+            device,
+            'xs_client0_15_to_xs_client16_19',
+        ))
 
     out_dir = os.path.join('result', options['dataset_name'], 'fedfed_xs_diagnostic_' + options.get('experiment_tag', 'run'))
     os.makedirs(out_dir, exist_ok=True)

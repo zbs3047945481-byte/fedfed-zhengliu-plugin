@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from src.plugins.base import BaseClientPlugin, BaseServerPlugin
 from src.plugins.fedfed_modules import build_fedfed_generator
+from src.optimizers.build import build_main_optimizer
 
 
 def _batch_random_crop(x, padding=4):
@@ -95,10 +96,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             latent_channels=int(options.get('fedfed_vae_latent_channels', 32)),
             z_dim=int(options.get('fedfed_vae_z_dim', 2048)),
         ).to(device)
-        self.model_optimizer = torch.optim.Adam(
-            self.model.parameters(),
-            lr=options.get('lr', 0.001),
-        )
+        self.model_optimizer = build_main_optimizer(self.model.parameters(), options)
         self.distill_optimizer = self._build_distill_optimizer()
         self.shared_x1 = None
         self.shared_x2 = None
@@ -125,12 +123,13 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         self.generator.to(device)
         self._move_optimizer_state(self.model_optimizer, device)
         self._move_optimizer_state(self.distill_optimizer, device)
-        if self.shared_x1 is not None:
-            self.shared_x1 = self.shared_x1.to(device)
-        if self.shared_x2 is not None:
-            self.shared_x2 = self.shared_x2.to(device)
-        if self.shared_y is not None:
-            self.shared_y = self.shared_y.to(device)
+        if self._shared_resident_device() == 'cuda' and device.type == 'cuda':
+            if self.shared_x1 is not None:
+                self.shared_x1 = self.shared_x1.to(device, non_blocking=True)
+            if self.shared_x2 is not None:
+                self.shared_x2 = self.shared_x2.to(device, non_blocking=True)
+            if self.shared_y is not None:
+                self.shared_y = self.shared_y.to(device, non_blocking=True)
 
     def _move_optimizer_state(self, optimizer, device):
         for state in optimizer.state.values():
@@ -188,9 +187,10 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             if shared_x2 is None:
                 shared_x2 = shared_x1
             if shared_x1 is not None and shared_y is not None and len(shared_y) > 0:
-                self.shared_x1 = shared_x1.to(self.device)
-                self.shared_x2 = shared_x2.to(self.device)
-                self.shared_y = shared_y.to(self.device)
+                resident_device = self.device if self._shared_resident_device() == 'cuda' and self.device.type == 'cuda' else torch.device('cpu')
+                self.shared_x1 = shared_x1.detach().to(resident_device, non_blocking=True)
+                self.shared_x2 = shared_x2.detach().to(resident_device, non_blocking=True)
+                self.shared_y = shared_y.detach().to(resident_device, non_blocking=True).long()
         self.in_warmup = False
         self.upload_x = []
         self.upload_y = []
@@ -204,28 +204,80 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         robust = self.generator(x)
         return x - robust
 
+    def _add_shared_noise(self, x_item, std_key):
+        noise_type = str(self.options.get('fedfed_noise_type', 'gaussian')).lower()
+        std = float(self.options.get(std_key, 0.0))
+        mean = float(self.options.get('fedfed_noise_mean', 0.0))
+        if noise_type == 'none' or std <= 0.0:
+            return x_item.clone()
+        if noise_type == 'gaussian':
+            noise = torch.normal(mean=mean, std=std, size=x_item.shape, device=x_item.device)
+        elif noise_type == 'laplace':
+            dist = torch.distributions.Laplace(
+                torch.tensor(mean, dtype=x_item.dtype, device=x_item.device),
+                torch.tensor(std, dtype=x_item.dtype, device=x_item.device),
+            )
+            noise = dist.sample(x_item.shape)
+        else:
+            raise ValueError('Unsupported fedfed_noise_type: {}'.format(noise_type))
+        return x_item.clone() + noise.to(dtype=x_item.dtype)
+
+    def _shared_resident_device(self):
+        return str(self.options.get('fedfed_shared_resident_device', 'cpu')).lower()
+
+    def _shared_noise_disabled(self):
+        return (
+            str(self.options.get('fedfed_noise_type', 'gaussian')).lower() == 'none'
+            or (
+                float(self.options.get('fedfed_noise_std1', 0.0)) <= 0.0
+                and float(self.options.get('fedfed_noise_std2', 0.0)) <= 0.0
+            )
+        )
+
+    def _collapse_duplicate_shared_views(self):
+        return (
+            bool(self.options.get('fedfed_collapse_duplicate_shared_no_noise', False))
+            and self._shared_noise_disabled()
+        )
+
     def _distill_objective(self, X, y):
         X = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
         xs_raw = self._raw_sensitive_feature(X)
         robust = X - xs_raw
         xs = xs_raw
-        pred_sensitive1 = self.distill_classifier(xs)
-        pred_sensitive2 = self.distill_classifier(xs)
-        pred_sensitive = torch.cat([pred_sensitive1, pred_sensitive2], dim=0)
-        loss_fd = F.cross_entropy(pred_sensitive, y.repeat(2))
+        if bool(self.options.get('fedfed_distill_ce_on_noisy_xs', False)):
+            xs1 = self._add_shared_noise(xs, 'fedfed_noise_std1')
+            xs2 = self._add_shared_noise(xs, 'fedfed_noise_std2')
+            pred_sensitive1, feature_sensitive1 = self.distill_classifier(xs1, return_feature=True)
+            pred_sensitive2 = self.distill_classifier(xs2)
+            pred_sensitive = torch.cat([pred_sensitive1, pred_sensitive2], dim=0)
+            loss_fd = F.cross_entropy(pred_sensitive, y.repeat(2))
+        else:
+            xs1 = xs
+            pred_sensitive1, feature_sensitive1 = self.distill_classifier(xs1, return_feature=True)
+            loss_fd = F.cross_entropy(pred_sensitive1, y)
         loss_recon = F.mse_loss(robust, X)
-        pred_raw = self.distill_classifier(X)
+        pred_raw, feature_raw = self.distill_classifier(X, return_feature=True)
         loss_x_ce = F.cross_entropy(pred_raw, y)
+        loss_align = F.mse_loss(feature_sensitive1, feature_raw.detach())
+        temperature = max(float(self.options.get('fedfed_logit_align_temperature', 2.0)), 1e-6)
+        teacher_prob = F.softmax(pred_raw.detach() / temperature, dim=1)
+        student_log_prob = F.log_softmax(pred_sensitive1 / temperature, dim=1)
+        loss_logit_align = F.kl_div(student_log_prob, teacher_prob, reduction='batchmean') * (temperature ** 2)
         kl_loss = self.generator.last_kl
         loss = float(self.options.get('fedfed_lambda_fd', 1.0)) * loss_fd
         loss = loss + self._reconstruction_weight(self.distill_epoch) * loss_recon
         loss = loss + float(self.options.get('fedfed_lambda_x_ce', 0.0)) * loss_x_ce
+        loss = loss + float(self.options.get('fedfed_lambda_align', 0.0)) * loss_align
+        loss = loss + float(self.options.get('fedfed_lambda_logit_align', 0.0)) * loss_logit_align
         if kl_loss is not None:
             loss = loss + float(self.options.get('fedfed_beta_kl', 0.001)) * kl_loss
         return pred_sensitive1, loss, {
             'fd_loss': loss_fd,
             'recon_loss': loss_recon,
             'x_ce_loss': loss_x_ce,
+            'align_loss': loss_align,
+            'logit_align_loss': loss_logit_align,
             'xs_norm': xs.flatten(1).norm(p=2, dim=1).mean(),
             'kl_loss': kl_loss if kl_loss is not None else xs.new_tensor(0.0),
         }
@@ -248,12 +300,15 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         if sample_size <= 0:
             return None, None, None
         indices = self._balanced_shared_indices(sample_size)
-        return self.shared_x1[indices], self.shared_x2[indices], self.shared_y[indices]
+        shared_x1 = self.shared_x1[indices].to(self.device, non_blocking=True).float()
+        shared_x2 = self.shared_x2[indices].to(self.device, non_blocking=True).float()
+        shared_y = self.shared_y[indices].to(self.device, non_blocking=True).long()
+        return shared_x1, shared_x2, shared_y
 
     def _balanced_shared_indices(self, sample_size):
         classes = torch.unique(self.shared_y)
         if classes.numel() == 0:
-            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.device)
+            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.shared_y.device)
         per_class = sample_size // classes.numel()
         remainder = sample_size - per_class * classes.numel()
         selected = []
@@ -262,15 +317,15 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             take = per_class + (1 if position < remainder else 0)
             if take <= 0 or class_indices.numel() == 0:
                 continue
-            draw = torch.randint(0, class_indices.numel(), (take,), device=self.device)
+            draw = torch.randint(0, class_indices.numel(), (take,), device=class_indices.device)
             selected.append(class_indices[draw])
         if not selected:
-            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.device)
+            return torch.randint(0, len(self.shared_y), (sample_size,), device=self.shared_y.device)
         indices = torch.cat(selected, dim=0)
         if indices.numel() < sample_size:
-            extra = torch.randint(0, len(self.shared_y), (sample_size - indices.numel(),), device=self.device)
+            extra = torch.randint(0, len(self.shared_y), (sample_size - indices.numel(),), device=indices.device)
             indices = torch.cat([indices, extra], dim=0)
-        return indices[torch.randperm(indices.numel(), device=self.device)]
+        return indices[torch.randperm(indices.numel(), device=indices.device)]
 
     def _maybe_collect_upload_samples(self, xs, y):
         per_class_limit = int(self.options.get('fedfed_upload_per_class', 0))
@@ -291,20 +346,29 @@ class FedFedImageClientPlugin(BaseClientPlugin):
     def train_batch(self, X, y):
         self.model_optimizer.zero_grad()
         X_train = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
-
-        pred_local = self.model(X_train)
-        loss = F.cross_entropy(pred_local, y)
-
         shared_x1, shared_x2, shared_y = self._sample_shared_batch(X_train.size(0))
         if shared_x1 is not None:
             shared_x1 = _train_augment(shared_x1, bool(self.options.get('fedfed_use_augmentation', True)))
-            shared_x2 = _train_augment(shared_x2, bool(self.options.get('fedfed_use_augmentation', True)))
-            mixed_x = torch.cat([X_train, shared_x1, shared_x2], dim=0)
-            mixed_y = torch.cat([y, shared_y, shared_y], dim=0)
-            pred_mixed = self.model(mixed_x)
-            loss = F.cross_entropy(pred_mixed, mixed_y)
-            pred_local = pred_mixed[:X_train.size(0)]
-        loss.backward()
+            if self._collapse_duplicate_shared_views():
+                mixed_x = torch.cat((X_train, shared_x1), dim=0)
+                pred_mixed = self.model(mixed_x)
+                pred_local = pred_mixed[:X_train.size(0)]
+                pred_shared = pred_mixed[X_train.size(0):]
+                loss_local = F.cross_entropy(pred_local, y)
+                loss_shared = F.cross_entropy(pred_shared, shared_y)
+                loss = (loss_local + 2.0 * loss_shared) / 3.0
+            else:
+                shared_x2 = _train_augment(shared_x2, bool(self.options.get('fedfed_use_augmentation', True)))
+                mixed_x = torch.cat((X_train, shared_x1, shared_x2), dim=0)
+                mixed_y = torch.cat((y, shared_y, shared_y), dim=0)
+                pred_mixed = self.model(mixed_x)
+                loss = F.cross_entropy(pred_mixed, mixed_y)
+                pred_local = pred_mixed[:X_train.size(0)]
+            loss.backward()
+        else:
+            pred_local = self.model(X_train)
+            loss = F.cross_entropy(pred_local, y)
+            loss.backward()
         self.model_optimizer.step()
         return pred_local, loss.detach()
 
@@ -359,6 +423,8 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             'fd_loss': float(stats['fd_loss'].detach().item()),
             'recon_loss': float(stats['recon_loss'].detach().item()),
             'x_ce_loss': float(stats['x_ce_loss'].detach().item()),
+            'align_loss': float(stats['align_loss'].detach().item()),
+            'logit_align_loss': float(stats['logit_align_loss'].detach().item()),
             'xs_norm': float(stats['xs_norm'].detach().item()),
             'kl_loss': float(stats['kl_loss'].detach().item()),
         }
@@ -408,8 +474,13 @@ class FedFedImageServerPlugin(BaseServerPlugin):
             payload['generator_state'] = self.generator_state
         shared_x1, shared_x2, shared_y = self._flatten_shared_buffer()
         if shared_y:
-            payload['shared_x1'] = torch.stack(shared_x1, dim=0)
-            payload['shared_x2'] = torch.stack(shared_x2, dim=0)
+            shared_x1_tensor = torch.stack(shared_x1, dim=0)
+            shared_x2_tensor = torch.stack(shared_x2, dim=0)
+            if bool(self.options.get('fedfed_shared_cpu_float16', True)):
+                shared_x1_tensor = shared_x1_tensor.half()
+                shared_x2_tensor = shared_x2_tensor.half()
+            payload['shared_x1'] = shared_x1_tensor
+            payload['shared_x2'] = shared_x2_tensor
             payload['shared_y'] = torch.tensor(shared_y, dtype=torch.long)
         return payload
 
@@ -499,13 +570,32 @@ class FedFedImageServerPlugin(BaseServerPlugin):
             for x_item, y_item in zip(xs, ys):
                 class_id = int(y_item.item())
                 bucket = self.shared_by_class.setdefault(class_id, [])
-                # The paper uses two noisy views rx_noise1/rx_noise2. With noise disabled,
-                # both views are the same sensitive feature tensor.
-                bucket.append((x_item.clone(), x_item.clone()))
+                bucket.append((
+                    self._add_shared_noise(x_item, 'fedfed_noise_std1'),
+                    self._add_shared_noise(x_item, 'fedfed_noise_std2'),
+                ))
                 if per_class_size > 0 and len(bucket) > per_class_size:
                     del bucket[:len(bucket) - per_class_size]
         if max_size > 0:
             self._trim_global_overflow(max_size)
+
+    def _add_shared_noise(self, x_item, std_key):
+        noise_type = str(self.options.get('fedfed_noise_type', 'gaussian')).lower()
+        std = float(self.options.get(std_key, 0.0))
+        mean = float(self.options.get('fedfed_noise_mean', 0.0))
+        if noise_type == 'none' or std <= 0.0:
+            return x_item.clone()
+        if noise_type == 'gaussian':
+            noise = torch.normal(mean=mean, std=std, size=x_item.shape, device=x_item.device)
+        elif noise_type == 'laplace':
+            dist = torch.distributions.Laplace(
+                torch.tensor(mean, dtype=x_item.dtype, device=x_item.device),
+                torch.tensor(std, dtype=x_item.dtype, device=x_item.device),
+            )
+            noise = dist.sample(x_item.shape)
+        else:
+            raise ValueError('Unsupported fedfed_noise_type: {}'.format(noise_type))
+        return x_item.clone() + noise.to(dtype=x_item.dtype)
 
     def _flatten_shared_buffer(self):
         shared_x1 = []

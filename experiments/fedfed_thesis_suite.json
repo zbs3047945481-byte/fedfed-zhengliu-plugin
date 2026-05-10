@@ -1,0 +1,212 @@
+{
+  "suite_name": "fedfed_thesis_suite",
+  "description": "Thesis experiment suite for FedAvg baseline and plug-and-play FedFed plugin on CIFAR-10.",
+  "common_args": {
+    "round_num": 300,
+    "num_of_clients": 10,
+    "c_fraction": 0.5,
+    "local_epoch": 1,
+    "batch_size": 32,
+    "dataloader_num_workers": 0,
+    "dataloader_pin_memory": true,
+    "torch_cudnn_benchmark": true,
+    "gpu": true,
+    "dataset_name": "cifar10",
+    "partition_strategy": "dirichlet",
+    "dirichlet_alpha": 0.1,
+    "min_samples_per_client": 1,
+    "enable_quantity_skew": true,
+    "enable_feature_skew": false,
+    "optimizer_name": "sgd",
+    "lr": 0.01,
+    "weight_decay": 0.0001,
+    "momentum": 0.9,
+    "nesterov": false,
+    "lr_schedule": "none",
+    "early_stop_enable": true,
+    "early_stop_min_rounds": 120,
+    "early_stop_patience": 35,
+    "early_stop_min_delta": 0.0008,
+    "client_empty_cache": false
+  },
+  "fedfed_args": {
+    "fedfed_two_stage": true,
+    "fedfed_generator_type": "paper_beta_vae",
+    "fedfed_vae_latent_channels": 32,
+    "fedfed_vae_z_dim": 2048,
+    "fedfed_distill_rounds": 15,
+    "fedfed_distill_local_epoch": 1,
+    "fedfed_distill_optimizer": "adamw",
+    "fedfed_distill_lr": 0.001,
+    "fedfed_distill_weight_decay": 0.000001,
+    "fedfed_lambda_recon": 5.0,
+    "fedfed_lambda_fd": 2.0,
+    "fedfed_beta_kl": 0.005,
+    "fedfed_lambda_x_ce": 0.4,
+    "fedfed_use_augmentation": true,
+    "fedfed_mixup_alpha": 2.0,
+    "fedfed_mosaic_batch_size": 32,
+    "fedfed_upload_per_class": 0,
+    "fedfed_upload_per_client": 0,
+    "fedfed_shared_buffer_size": 0,
+    "fedfed_shared_per_class_size": 0,
+    "fedfed_shared_batch_size": 0,
+    "fedfed_shared_cpu_float16": false,
+    "fedfed_shared_resident_device": "cuda",
+    "fedfed_collapse_duplicate_shared_no_noise": true,
+    "fedfed_noise_type": "gaussian",
+    "fedfed_noise_mean": 0.0,
+    "fedfed_noise_std1": 0.2,
+    "fedfed_noise_std2": 0.25
+  },
+  "experiments": [
+    {
+      "id": "main_a0p1_e1",
+      "group": "main",
+      "title": "Main result: alpha=0.1, E=1, K=10",
+      "purpose": "Verify that FedFed plugin improves FedAvg under the paper main CIFAR-10 setting.",
+      "runs": [
+        {"method": "FedAvg", "plugin_name": "none"},
+        {"method": "FedFedPlugin", "plugin_name": "fedfed_image"}
+      ],
+      "metrics": ["best_acc", "final_acc", "best_round", "target_round", "speedup"],
+      "figures": ["accuracy_curve", "best_final_bar"]
+    },
+    {
+      "id": "heterogeneity_alpha",
+      "group": "heterogeneity",
+      "title": "Heterogeneity strength",
+      "purpose": "Measure how FedFed gain changes with Dirichlet alpha.",
+      "grid": [{"dirichlet_alpha": 0.1}, {"dirichlet_alpha": 0.3}, {"dirichlet_alpha": 0.5}],
+      "runs": [
+        {"method": "FedAvg", "plugin_name": "none"},
+        {"method": "FedFedPlugin", "plugin_name": "fedfed_image"}
+      ],
+      "metrics": ["best_acc", "final_acc", "gain"],
+      "figures": ["alpha_gain_line", "alpha_best_acc_bar"]
+    },
+    {
+      "id": "local_epoch",
+      "group": "local_epoch",
+      "title": "Local epoch sensitivity",
+      "purpose": "Compare paper E=1 against stronger local drift E=5.",
+      "grid": [{"local_epoch": 1}, {"local_epoch": 5}],
+      "runs": [
+        {"method": "FedAvg", "plugin_name": "none"},
+        {"method": "FedFedPlugin", "plugin_name": "fedfed_image"}
+      ],
+      "metrics": ["best_acc", "final_acc", "gain"],
+      "figures": ["epoch_curve", "epoch_gain_bar"]
+    },
+    {
+      "id": "shared_pool",
+      "group": "shared_pool",
+      "title": "Shared sensitive feature pool size",
+      "purpose": "Verify whether larger/full shared sensitive feature pool improves plugin performance.",
+      "runs": [
+        {
+          "method": "FedFedSmallPool",
+          "plugin_name": "fedfed_image",
+          "overrides": {
+            "fedfed_upload_per_class": 4,
+            "fedfed_upload_per_client": 100,
+            "fedfed_shared_per_class_size": 80,
+            "fedfed_shared_buffer_size": 800
+          }
+        },
+        {
+          "method": "FedFedMediumPool",
+          "plugin_name": "fedfed_image",
+          "overrides": {
+            "fedfed_upload_per_class": 20,
+            "fedfed_upload_per_client": 1000,
+            "fedfed_shared_per_class_size": 400,
+            "fedfed_shared_buffer_size": 4000
+          }
+        },
+        {
+          "method": "FedFedFullPool",
+          "plugin_name": "fedfed_image"
+        }
+      ],
+      "metrics": ["best_acc", "final_acc", "shared_pool_size"],
+      "figures": ["shared_pool_bar"]
+    },
+    {
+      "id": "dp_noise",
+      "group": "dp_noise",
+      "title": "DP noise robustness",
+      "purpose": "Measure the privacy-performance tradeoff caused by noise on shared performance-sensitive features.",
+      "runs": [
+        {
+          "method": "FedFedNoNoise",
+          "plugin_name": "fedfed_image",
+          "overrides": {"fedfed_noise_type": "none", "fedfed_noise_std1": 0.0, "fedfed_noise_std2": 0.0}
+        },
+        {
+          "method": "FedFedGaussianLow",
+          "plugin_name": "fedfed_image",
+          "overrides": {"fedfed_noise_type": "gaussian", "fedfed_noise_std1": 0.1, "fedfed_noise_std2": 0.15}
+        },
+        {
+          "method": "FedFedGaussianPaper",
+          "plugin_name": "fedfed_image",
+          "overrides": {"fedfed_noise_type": "gaussian", "fedfed_noise_std1": 0.2, "fedfed_noise_std2": 0.25}
+        },
+        {
+          "method": "FedFedGaussianHigh",
+          "plugin_name": "fedfed_image",
+          "overrides": {"fedfed_noise_type": "gaussian", "fedfed_noise_std1": 0.3, "fedfed_noise_std2": 0.35}
+        },
+        {
+          "method": "FedFedLaplacePaper",
+          "plugin_name": "fedfed_image",
+          "overrides": {"fedfed_noise_type": "laplace", "fedfed_noise_std1": 0.2, "fedfed_noise_std2": 0.25}
+        }
+      ],
+      "metrics": ["best_acc", "final_acc", "noise_type", "noise_level"],
+      "figures": ["noise_accuracy_line", "noise_feature_grid"]
+    },
+    {
+      "id": "distillation",
+      "group": "distillation",
+      "title": "Feature distillation sufficiency",
+      "purpose": "Find whether the generator is trained sufficiently and whether xs quality saturates.",
+      "runs": [
+        {"method": "Distill5", "plugin_name": "fedfed_image", "overrides": {"fedfed_distill_rounds": 5}},
+        {"method": "Distill15", "plugin_name": "fedfed_image", "overrides": {"fedfed_distill_rounds": 15}},
+        {"method": "Distill30", "plugin_name": "fedfed_image", "overrides": {"fedfed_distill_rounds": 30}},
+        {"method": "Distill30E2", "plugin_name": "fedfed_image", "overrides": {"fedfed_distill_rounds": 30, "fedfed_distill_local_epoch": 2}}
+      ],
+      "metrics": ["best_acc", "final_acc", "fd_loss", "distill_acc", "xs_norm"],
+      "figures": ["distill_metric_curves", "distill_best_acc_bar"]
+    },
+    {
+      "id": "diagnostic_x_xs_xr",
+      "group": "diagnostic",
+      "title": "Raw/sensitive/robust feature classifier diagnostic",
+      "purpose": "Verify that xs is classifiable and xr contains less task-relevant information.",
+      "type": "diagnostic",
+      "metrics": ["x_acc", "xs_acc", "xr_acc"],
+      "figures": ["feature_diagnostic_bar"]
+    },
+    {
+      "id": "overhead",
+      "group": "overhead",
+      "title": "Plugin overhead",
+      "purpose": "Quantify extra training time, memory, and shared dataset storage.",
+      "type": "analysis",
+      "metrics": ["fedavg_time", "fedfed_time", "distill_time", "gpu_memory_peak", "shared_dataset_size"],
+      "figures": ["overhead_table", "overhead_bar"]
+    }
+  ],
+  "recommended_minimal_set": [
+    "main_a0p1_e1",
+    "heterogeneity_alpha",
+    "diagnostic_x_xs_xr",
+    "distillation",
+    "shared_pool",
+    "dp_noise",
+    "overhead"
+  ]
+}

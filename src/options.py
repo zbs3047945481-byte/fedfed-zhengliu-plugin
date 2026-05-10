@@ -34,17 +34,17 @@ def input_options():
     parser.add_argument('--gpu', type=str2bool, default=True, help='gpu id to use')
     #是否使用 GPU
     
-    parser.add_argument('--round_num', type=int, default=150, help='number of round in comm')
+    parser.add_argument('--round_num', type=int, default=300, help='number of round in comm')
     #通信轮数：每一轮 = 一次 FedAvg 聚合
     
-    parser.add_argument('--num_of_clients', type=int, default=20, help='numer of the clients')
+    parser.add_argument('--num_of_clients', type=int, default=10, help='numer of the clients')
     #联邦系统中的客户端总数 K
     
-    parser.add_argument('--c_fraction', type=float, default=0.2,
+    parser.add_argument('--c_fraction', type=float, default=0.5,
                         help='C fraction, 0 means 1 client, 1 means total clients')
     #每一轮参与训练的客户端比例
     
-    parser.add_argument('--local_epoch', type=int, default=5, help='local train epoch')
+    parser.add_argument('--local_epoch', type=int, default=1, help='local train epoch')
     #每个客户端本地训练多少个 epoch
     #比如有1000条数据，把这1000个数据全部用来算一次梯度并更新参数，这完整一轮叫一个epoch
 
@@ -58,6 +58,8 @@ def input_options():
                         help='Whether DataLoader should pin host memory when using GPU.')
     parser.add_argument('--torch_cudnn_benchmark', type=str2bool, default=True,
                         help='Enable cudnn benchmark for faster fixed-shape GPU training.')
+    parser.add_argument('--client_empty_cache', type=str2bool, default=True,
+                        help='Call torch.cuda.empty_cache() after each client update. Disable on large GPUs for speed.')
     parser.add_argument('--early_stop_enable', type=str2bool, default=False,
                         help='Stop training when the global test accuracy has plateaued.')
     parser.add_argument('--early_stop_min_rounds', type=int, default=0,
@@ -67,7 +69,7 @@ def input_options():
     parser.add_argument('--early_stop_min_delta', type=float, default=0.0,
                         help='Minimum absolute accuracy improvement required to reset early-stop patience.')
 
-    parser.add_argument("--lr", type=float, default=0.001, help="learning rate, \
+    parser.add_argument("--lr", type=float, default=0.01, help="learning rate, \
                         use value from origin paper as default")
     #本地学习率
     
@@ -78,14 +80,22 @@ def input_options():
     parser.add_argument('--experiment_tag', type=str, default='',
                         help='Optional tag appended to experiment output folder names.')
     
-    parser.add_argument('--weight_decay', help='weight_decay;', type=int, default=1)
+    parser.add_argument('--optimizer_name', type=str, default='sgd',
+                        choices=['sgd', 'adam'], help='Main classifier optimizer.')
+    parser.add_argument('--weight_decay', help='weight_decay;', type=float, default=1e-4)
+    parser.add_argument('--momentum', type=float, default=0.9,
+                        help='Momentum for SGD main classifier optimizer.')
+    parser.add_argument('--nesterov', type=str2bool, default=False,
+                        help='Use Nesterov momentum for SGD main classifier optimizer.')
+    parser.add_argument('--lr_schedule', type=str, default='none',
+                        choices=['none', 'inverse_round'], help='Main classifier learning-rate schedule.')
     #权重衰减：防止过拟合
 
     # ---------- Heterogeneity modeling ----------
     parser.add_argument('--partition_strategy', type=str, default='dirichlet',
                         choices=['iid', 'dirichlet'],
                         help='Client data partition strategy.')
-    parser.add_argument('--dirichlet_alpha', type=float, default=0.3,
+    parser.add_argument('--dirichlet_alpha', type=float, default=0.1,
                         help='Dirichlet alpha for label skew. Smaller means stronger heterogeneity.')
     parser.add_argument('--unify_heterogeneity_alpha', type=str2bool, default=True,
                         help='Whether to let dirichlet_alpha jointly control label, quantity, and feature heterogeneity.')
@@ -95,6 +105,10 @@ def input_options():
                         help='Whether to vary client dataset sizes.')
     parser.add_argument('--quantity_skew_beta', type=float, default=0.5,
                         help='Dirichlet beta for client quantity skew. Smaller means more imbalance.')
+    parser.add_argument('--dirichlet_balance', type=str2bool, default=False,
+                        help='FedFed official LDA option: rebalance per-class Dirichlet proportions by current client usage.')
+    parser.add_argument('--dirichlet_min_p', type=float, default=None,
+                        help='FedFed official LDA option: add a small floor to every client proportion before normalization.')
     parser.add_argument('--enable_feature_skew', type=str2bool, default=False,
                         help='Whether to apply client-specific feature shift/noise.')
     parser.add_argument('--feature_alpha_anchor', type=float, default=0.1,
@@ -143,6 +157,14 @@ def input_options():
                         help='KL weight for the beta-VAE generator.')
     parser.add_argument('--fedfed_lambda_x_ce', type=float, default=0.4,
                         help='Weight of CE(f(x), y) used by the paper FedFed VAE objective.')
+    parser.add_argument('--fedfed_lambda_align', type=float, default=0.0,
+                        help='Weight of feature alignment MSE between h(x_s) and stopgrad(h(x)).')
+    parser.add_argument('--fedfed_lambda_logit_align', type=float, default=0.0,
+                        help='Weight of soft logit KL alignment between f(x_s) and stopgrad(f(x)).')
+    parser.add_argument('--fedfed_logit_align_temperature', type=float, default=2.0,
+                        help='Temperature used by FedFed logit alignment.')
+    parser.add_argument('--fedfed_distill_ce_on_noisy_xs', type=str2bool, default=False,
+                        help='Apply feature-distillation CE to the two noisy x_s views, matching the FedFed paper code path.')
     parser.add_argument('--fedfed_use_augmentation', type=str2bool, default=True,
                         help='Use paper-style VAE-stage augmentation: crop/flip, mixup classifier warmup, and mosaic VAE warmup.')
     parser.add_argument('--fedfed_mixup_alpha', type=float, default=2.0,
@@ -166,6 +188,22 @@ def input_options():
                         help='Max server-side shared samples per class. 0 means no FIFO truncation.')
     parser.add_argument('--fedfed_shared_batch_size', type=int, default=0,
                         help='Batch size sampled for each shared view. 0 means match local batch size.')
+    parser.add_argument('--fedfed_shared_cpu_float16', type=str2bool, default=True,
+                        help='Store the CPU-resident full shared sensitive dataset in float16, then cast sampled batches to float32.')
+    parser.add_argument('--fedfed_shared_resident_device', type=str, default='cpu',
+                        choices=['cpu', 'cuda'],
+                        help='Device used to keep the full shared sensitive dataset inside each selected client.')
+    parser.add_argument('--fedfed_collapse_duplicate_shared_no_noise', type=str2bool, default=False,
+                        help='When noise is disabled, train on one shared view with doubled shared loss weight instead of two duplicate views.')
+    parser.add_argument('--fedfed_noise_type', type=str, default='gaussian',
+                        choices=['gaussian', 'laplace', 'none'],
+                        help='Noise distribution used to build the two shared sensitive feature views.')
+    parser.add_argument('--fedfed_noise_mean', type=float, default=0.0,
+                        help='Mean/location of FedFed shared sensitive feature noise.')
+    parser.add_argument('--fedfed_noise_std1', type=float, default=0.2,
+                        help='Noise std/scale for the first shared sensitive feature view.')
+    parser.add_argument('--fedfed_noise_std2', type=float, default=0.25,
+                        help='Noise std/scale for the second shared sensitive feature view.')
     parser.add_argument('--fedfed_num_classes', type=int, default=10,
                         help='Number of dataset classes.')
     parser.add_argument('--diagnostic_epochs', type=int, default=10,

@@ -8,13 +8,33 @@ source "${SCRIPT_DIR}/remote_common.sh"
 
 require_remote_config
 
-PREFIX="fedavg_fedfed_paper_compare_$(date -u +%Y%m%dT%H%M%SZ)"
+SUITE_PATH="${SCRIPT_DIR}/../experiments/fedfed_thesis_suite.json"
+PREFIX="fedfed_thesis_suite_$(date -u +%Y%m%dT%H%M%SZ)"
+GROUPS=""
+EXPERIMENTS=""
+DRY_RUN="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --suite)
+      SUITE_PATH="$2"
+      shift 2
+      ;;
     --prefix)
       PREFIX="$2"
       shift 2
+      ;;
+    --groups)
+      GROUPS="$2"
+      shift 2
+      ;;
+    --experiments)
+      EXPERIMENTS="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN="true"
+      shift
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -26,11 +46,78 @@ done
 TMP_DIR="$(make_temp_dir)"
 trap 'cleanup_temp_dir "${TMP_DIR}"' EXIT
 
-QUEUE_FILE="${TMP_DIR}/fedavg_fedfed_paper_compare.ps1"
-LAUNCHER_FILE="${TMP_DIR}/fedavg_fedfed_paper_compare_launcher.ps1"
-REMOTE_QUEUE_PATH="${REMOTE_Codex_DIR}/fedavg_fedfed_paper_compare_${PREFIX}.ps1"
-REMOTE_LAUNCHER_PATH="${REMOTE_Codex_DIR}/fedavg_fedfed_paper_compare_launcher_${PREFIX}.ps1"
+RUNS_JSON="${TMP_DIR}/suite_runs.json"
+QUEUE_FILE="${TMP_DIR}/thesis_suite.ps1"
+LAUNCHER_FILE="${TMP_DIR}/thesis_suite_launcher.ps1"
+REMOTE_RUNS_JSON="${REMOTE_Codex_DIR}/thesis_suite_runs_${PREFIX}.json"
+REMOTE_QUEUE_PATH="${REMOTE_Codex_DIR}/thesis_suite_${PREFIX}.ps1"
+REMOTE_LAUNCHER_PATH="${REMOTE_Codex_DIR}/thesis_suite_launcher_${PREFIX}.ps1"
 REMOTE_QUEUE_PS_PATH="${REMOTE_QUEUE_PATH//\//\\}"
+
+python3 - "${SUITE_PATH}" "${RUNS_JSON}" "${PREFIX}" "${GROUPS}" "${EXPERIMENTS}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+suite_path, out_path, prefix, groups_raw, experiments_raw = sys.argv[1:6]
+suite = json.loads(Path(suite_path).read_text(encoding="utf-8"))
+groups = {item.strip() for item in groups_raw.split(",") if item.strip()}
+experiments = {item.strip() for item in experiments_raw.split(",") if item.strip()}
+
+def stringify(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+def arg_list(args):
+    output = []
+    for key, value in args.items():
+        output.extend([f"--{key}", stringify(value)])
+    return output
+
+rows = []
+for exp in suite["experiments"]:
+    if exp.get("type") in {"diagnostic", "analysis"}:
+        continue
+    if groups and exp.get("group") not in groups:
+        continue
+    if experiments and exp.get("id") not in experiments:
+        continue
+    grid = exp.get("grid") or [{}]
+    for grid_item in grid:
+        for run in exp.get("runs", []):
+            method = run["method"]
+            args = dict(suite["common_args"])
+            args.update(grid_item)
+            args["plugin_name"] = run["plugin_name"]
+            if run["plugin_name"] == "fedfed_image":
+                args.update(suite["fedfed_args"])
+            args.update(run.get("overrides", {}))
+            grid_tag_parts = []
+            for key in sorted(grid_item):
+                grid_tag_parts.append(f"{key.replace('dirichlet_', '').replace('local_', '')}{str(grid_item[key]).replace('.', 'p')}")
+            grid_tag = "_" + "_".join(grid_tag_parts) if grid_tag_parts else ""
+            run_id = f"{prefix}_{exp['id']}{grid_tag}_{method}"
+            args["experiment_tag"] = run_id
+            rows.append({
+                "run_id": run_id,
+                "experiment_id": exp["id"],
+                "group": exp["group"],
+                "method": method,
+                "plugin_name": run["plugin_name"],
+                "arguments": arg_list(args),
+            })
+
+Path(out_path).write_text(json.dumps(rows, indent=2), encoding="utf-8")
+print(f"expanded_runs={len(rows)}")
+for row in rows:
+    print(row["run_id"])
+PY
+
+if [[ "${DRY_RUN}" == "true" ]]; then
+  echo "Dry run only. Expanded run list saved at ${RUNS_JSON}"
+  exit 0
+fi
 
 cat > "${QUEUE_FILE}" <<EOF
 \$ErrorActionPreference = 'Stop'
@@ -38,6 +125,7 @@ cat > "${QUEUE_FILE}" <<EOF
 \$projectPath = '${REMOTE_PROJECT_DIR}'
 \$runsRoot = '${REMOTE_RUNS_DIR}'
 \$prefix = '${PREFIX}'
+\$runsJsonPath = '${REMOTE_RUNS_JSON}'
 \$queueStatusPath = Join-Path \$runsRoot ("\$prefix" + '_queue_status.json')
 \$summaryJsonPath = Join-Path \$runsRoot ("\$prefix" + '_summary.json')
 \$summaryCsvPath = Join-Path \$runsRoot ("\$prefix" + '_summary.csv')
@@ -76,27 +164,17 @@ function Find-Metrics(\$runId) {
 
 function Parse-Metrics(\$metricsPath) {
   \$m = Get-Content -Raw -LiteralPath \$metricsPath | ConvertFrom-Json
-  \$acc = @(\$m.acc_on_g_test_data)
-  \$bestRound = 0
-  \$best = -1.0
-  for (\$i = 0; \$i -lt \$acc.Count; \$i++) {
-    if ([double]\$acc[\$i] -gt \$best) {
-      \$best = [double]\$acc[\$i]
-      \$bestRound = \$i
-    }
-  }
   return [ordered]@{
     final_acc = [double]\$m.final_test_acc
     best_acc = [double]\$m.best_test_acc
-    best_round = \$bestRound
     final_round = [int]\$m.final_round
     final_loss = [double]\$m.final_test_loss
     best_loss = [double]\$m.best_test_loss
   }
 }
 
-function Run-One(\$name, \$pluginName) {
-  \$runId = "\${prefix}_\${name}"
+function Run-One(\$runSpec) {
+  \$runId = [string]\$runSpec.run_id
   \$runDir = Join-Path \$runsRoot \$runId
   \$stdoutPath = Join-Path \$runDir 'stdout.log'
   \$stderrPath = Join-Path \$runDir 'stderr.log'
@@ -106,71 +184,14 @@ function Run-One(\$name, \$pluginName) {
   New-Item -ItemType File -Force -Path \$stdoutPath | Out-Null
   New-Item -ItemType File -Force -Path \$stderrPath | Out-Null
 
-  \$trainArgs = @(
-    '--round_num', '300',
-    '--num_of_clients', '10',
-    '--c_fraction', '0.5',
-    '--local_epoch', '1',
-    '--batch_size', '32',
-    '--dataloader_num_workers', '0',
-    '--dataloader_pin_memory', 'true',
-    '--torch_cudnn_benchmark', 'true',
-    '--gpu', 'true',
-    '--dataset_name', 'cifar10',
-    '--partition_strategy', 'dirichlet',
-    '--dirichlet_alpha', '0.1',
-    '--min_samples_per_client', '1',
-    '--enable_quantity_skew', 'true',
-    '--enable_feature_skew', 'false',
-    '--lr', '0.01',
-    '--optimizer_name', 'sgd',
-    '--weight_decay', '0.0001',
-    '--momentum', '0.9',
-    '--nesterov', 'false',
-    '--lr_schedule', 'none',
-    '--early_stop_enable', 'true',
-    '--early_stop_min_rounds', '150',
-    '--early_stop_patience', '80',
-    '--early_stop_min_delta', '0.001',
-    '--plugin_name', \$pluginName,
-    '--experiment_tag', \$runId
-  )
-  if (\$pluginName -eq 'fedfed_image') {
-    \$trainArgs += @(
-      '--fedfed_two_stage', 'true',
-      '--fedfed_generator_type', 'paper_beta_vae',
-      '--fedfed_vae_latent_channels', '32',
-      '--fedfed_vae_z_dim', '2048',
-      '--fedfed_distill_rounds', '15',
-      '--fedfed_distill_local_epoch', '1',
-      '--fedfed_distill_optimizer', 'adamw',
-      '--fedfed_distill_lr', '0.001',
-      '--fedfed_distill_weight_decay', '0.000001',
-      '--fedfed_lambda_recon', '5.0',
-      '--fedfed_lambda_fd', '2.0',
-      '--fedfed_beta_kl', '0.005',
-      '--fedfed_lambda_x_ce', '0.4',
-      '--fedfed_use_augmentation', 'true',
-      '--fedfed_mixup_alpha', '2.0',
-      '--fedfed_mosaic_batch_size', '32',
-      '--fedfed_upload_per_class', '0',
-      '--fedfed_upload_per_client', '0',
-      '--fedfed_shared_buffer_size', '0',
-      '--fedfed_shared_per_class_size', '0',
-      '--fedfed_shared_batch_size', '0',
-      '--fedfed_shared_cpu_float16', 'true',
-      '--fedfed_noise_type', 'gaussian',
-      '--fedfed_noise_mean', '0.0',
-      '--fedfed_noise_std1', '0.2',
-      '--fedfed_noise_std2', '0.25'
-    )
-  }
-
+  \$trainArgs = @(\$runSpec.arguments)
   \$startedUtc = (Get-Date).ToUniversalTime().ToString('o')
   [ordered]@{
     run_id = \$runId
-    name = \$name
-    plugin_name = \$pluginName
+    experiment_id = \$runSpec.experiment_id
+    group = \$runSpec.group
+    method = \$runSpec.method
+    plugin_name = \$runSpec.plugin_name
     project_path = \$projectPath
     python_path = \$pythonPath
     stdout_log = \$stdoutPath
@@ -188,7 +209,7 @@ function Run-One(\$name, \$pluginName) {
     finished_utc = \$null
   } | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 \$statusPath
 
-  Write-QueueStatus 'running' \$runId "Running \$name"
+  Write-QueueStatus 'running' \$runId "Running \$runId"
   Set-Location \$projectPath
   \$env:PYTORCH_CUDA_ALLOC_CONF = 'max_split_size_mb:128'
   \$ErrorActionPreference = 'Continue'
@@ -211,20 +232,21 @@ function Run-One(\$name, \$pluginName) {
   }
   \$metricsPath = Find-Metrics \$runId
   if (\$null -eq \$metricsPath) {
-    Write-QueueStatus 'failed' \$runId 'metrics.json not found after successful process exit.'
+    Write-QueueStatus 'failed' \$runId 'metrics.json not found.'
     throw "metrics.json not found: \$runId"
   }
   \$metrics = Parse-Metrics \$metricsPath
   \$durationMin = [Math]::Round(((Get-Date \$finishedUtc) - (Get-Date \$startedUtc)).TotalMinutes, 2)
   \$row = [ordered]@{
     run_id = \$runId
-    name = \$name
-    plugin_name = \$pluginName
+    experiment_id = \$runSpec.experiment_id
+    group = \$runSpec.group
+    method = \$runSpec.method
+    plugin_name = \$runSpec.plugin_name
     status = \$finalStatus
     duration_min = \$durationMin
     final_acc = \$metrics.final_acc
     best_acc = \$metrics.best_acc
-    best_round = \$metrics.best_round
     final_round = \$metrics.final_round
     final_loss = \$metrics.final_loss
     best_loss = \$metrics.best_loss
@@ -236,10 +258,12 @@ function Run-One(\$name, \$pluginName) {
 
 try {
   New-Item -ItemType Directory -Force -Path \$runsRoot | Out-Null
-  Write-QueueStatus 'starting' '' 'FedAvg vs paper-style FedFed comparison starting.'
-  Run-One 'fedavg' 'none'
-  Run-One 'fedfed_paper' 'fedfed_image'
-  Write-QueueStatus 'succeeded' '' 'FedAvg vs paper-style FedFed comparison finished.'
+  \$runSpecs = Get-Content -Raw -LiteralPath \$runsJsonPath | ConvertFrom-Json
+  Write-QueueStatus 'starting' '' ("Thesis suite starting with {0} runs." -f \$runSpecs.Count)
+  foreach (\$runSpec in \$runSpecs) {
+    Run-One \$runSpec
+  }
+  Write-QueueStatus 'succeeded' '' 'Thesis suite finished.'
 } catch {
   Add-Content -Path (Join-Path \$runsRoot ("\$prefix" + '_queue_error.log')) -Value (\$_ | Out-String)
   Write-Summary
@@ -260,7 +284,8 @@ Write-Output ("QUEUE_OK ${PREFIX} PID={0}" -f \$result.ProcessId)
 EOF
 
 ssh_remote "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${REMOTE_Codex_DIR}' | Out-Null\""
+scp_to_remote "${RUNS_JSON}" "${REMOTE_RUNS_JSON}"
 scp_to_remote "${QUEUE_FILE}" "${REMOTE_QUEUE_PATH}"
 scp_to_remote "${LAUNCHER_FILE}" "${REMOTE_LAUNCHER_PATH}"
 ssh_remote "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${REMOTE_LAUNCHER_PATH}\""
-echo "FedAvg vs paper FedFed comparison submitted: ${PREFIX}"
+echo "FedFed thesis suite submitted: ${PREFIX}"
