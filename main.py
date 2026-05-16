@@ -3,6 +3,19 @@ from src.options import input_options
 from src.utils.tools import configure_runtime, get_each_client_data_index, resolve_heterogeneity_options, set_random_seed
 from getdata import GetDataSet
 from src.fed_server.fedavg import FedAvgTrainer
+from src.fed_server.fedavgm import FedAvgMTrainer
+from src.fed_server.fedprox import FedProxTrainer
+from src.fed_server.fednova import FedNovaTrainer
+from src.fed_server.scaffold import ScaffoldTrainer
+
+
+TRAINER_REGISTRY = {
+    'fedavg': FedAvgTrainer,
+    'fedavgm': FedAvgMTrainer,
+    'fedprox': FedProxTrainer,
+    'fednova': FedNovaTrainer,
+    'scaffold': ScaffoldTrainer,
+}
 
 
 def main():
@@ -17,10 +30,10 @@ def main():
         options["num_of_clients"],
         options,
     )
-    #创建 FedAvg 训练器，初始化全局模型（如 CNN），创建客户端对象，每个客户端持有部分数据
-    FedAvg = FedAvgTrainer(options, dataset, each_client_label_index)
-    FedAvg.train()
+    algorithm = str(options.get('fed_algorithm', 'fedavg')).lower()
+    trainer_cls = TRAINER_REGISTRY[algorithm]
+    trainer = trainer_cls(options, dataset, each_client_label_index)
+    trainer.train()
 
 if __name__ == '__main__':
     main()
-

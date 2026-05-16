@@ -1,7 +1,15 @@
 import json
 import os
 
-from tensorboardX import SummaryWriter
+try:
+    from tensorboardX import SummaryWriter
+except ModuleNotFoundError:
+    class SummaryWriter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_scalar(self, *args, **kwargs):
+            pass
 
 from src.plugins import resolve_plugin_name
 from src.utils.plotting import save_single_run_plots

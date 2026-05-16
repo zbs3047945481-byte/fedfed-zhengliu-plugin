@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import concurrent.futures
 import csv
 import json
 import os
@@ -97,12 +98,70 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+def write_csv_with_keys(path, rows, keys=None):
+    if not rows:
+        return
+    if keys is None:
+        keys = sorted({key for row in rows for key in row.keys()})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def find_metrics(project_dir, run_id):
     root = project_dir / "result" / "cifar10"
     if not root.exists():
         return None
     candidates = sorted(root.glob(f"*{run_id}*/metrics.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates[0] if candidates else None
+
+
+def run_training_spec(args, project_dir, runs_root, spec, index, total):
+    run_id = spec["run_id"]
+    run_dir = runs_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    write_json(run_dir / "run_meta.json", spec)
+    write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "running", "index": index, "total": total})
+    env = os.environ.copy()
+    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
+    start = time.time()
+    with (run_dir / "stdout.log").open("w", encoding="utf-8") as out, (run_dir / "stderr.log").open("w", encoding="utf-8") as err:
+        proc = subprocess.run(
+            [args.python, "-u", "main.py", *spec["arguments"]],
+            cwd=str(project_dir),
+            stdout=out,
+            stderr=err,
+            env=env,
+        )
+    duration = round((time.time() - start) / 60.0, 2)
+    if proc.returncode != 0:
+        write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "failed", "exit_code": proc.returncode})
+        raise RuntimeError(f"{run_id} failed with exit code {proc.returncode}")
+    metrics_path = find_metrics(project_dir, run_id)
+    if metrics_path is None:
+        raise RuntimeError(f"metrics not found for {run_id}")
+    metrics = parse_metrics(metrics_path)
+    row = {
+        "run_id": run_id,
+        "experiment_id": spec["experiment_id"],
+        "group": spec["group"],
+        "method": spec["method"],
+        "plugin_name": spec["plugin_name"],
+        "status": "succeeded",
+        "duration_min": duration,
+        "dirichlet_alpha": spec["options"].get("dirichlet_alpha"),
+        "local_epoch": spec["options"].get("local_epoch"),
+        "batch_size": spec["options"].get("batch_size"),
+        "distill_rounds": spec["options"].get("fedfed_distill_rounds", 0),
+        "shared_buffer_size": spec["options"].get("fedfed_shared_buffer_size", 0),
+        "shared_per_class_size": spec["options"].get("fedfed_shared_per_class_size", 0),
+        **metrics,
+    }
+    write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "succeeded", "duration_min": duration, "metrics_path": str(metrics_path)})
+    return row
 
 
 def parse_metrics(path):
@@ -125,8 +184,11 @@ def plot_results(summary_rows, output_dir):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import pandas as pd
-    import seaborn as sns
+    try:
+        import pandas as pd
+        import seaborn as sns
+    except ModuleNotFoundError:
+        return plot_results_basic(summary_rows, output_dir, plt)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame([row for row in summary_rows if row.get("status") == "succeeded"])
@@ -186,8 +248,8 @@ def plot_results(summary_rows, output_dir):
             fig.savefig(output_dir / "heterogeneity_alpha_gain.pdf")
             plt.close(fig)
 
-    # Curves for paired FedAvg/FedFed experiments.
-    for exp_id in ["main_a0p1_e1", "heterogeneity_alpha", "local_epoch"]:
+    # Curves for all experiment groups.
+    for exp_id in sorted(set(plot_df["experiment_id"].astype(str))):
         part = plot_df[plot_df["experiment_id"] == exp_id]
         if part.empty:
             continue
@@ -213,7 +275,74 @@ def plot_results(summary_rows, output_dir):
             plt.close(fig)
 
 
+def plot_results_basic(summary_rows, output_dir, plt):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = [row for row in summary_rows if row.get("status") == "succeeded"]
+    if not rows:
+        return
+    write_csv_with_keys(output_dir / "summary.csv", rows)
+
+    by_group = {}
+    for row in rows:
+        by_group.setdefault(str(row.get("group", "results")), []).append(row)
+
+    for group, part in by_group.items():
+        methods = [str(row.get("method", row.get("run_id", ""))) for row in part]
+        x = list(range(len(methods)))
+        best = [float(row.get("best_acc") or 0.0) * 100.0 for row in part]
+        final = [float(row.get("final_acc") or 0.0) * 100.0 for row in part]
+        width = 0.36
+        fig, ax = plt.subplots(figsize=(max(7.5, len(methods) * 1.25), 4.8))
+        ax.bar([v - width / 2 for v in x], best, width=width, label="best_acc")
+        ax.bar([v + width / 2 for v in x], final, width=width, label="final_acc")
+        ax.set_title(f"{group}: best/final accuracy")
+        ax.set_ylabel("Accuracy (%)")
+        ax.set_xticks(x)
+        ax.set_xticklabels(methods, rotation=25, ha="right", fontsize=8)
+        ax.grid(axis="y", linestyle="--", alpha=0.35)
+        ax.legend(frameon=False)
+        fig.tight_layout()
+        fig.savefig(output_dir / f"{group}_best_final.png", dpi=300)
+        fig.savefig(output_dir / f"{group}_best_final.pdf")
+        plt.close(fig)
+
+    by_exp = {}
+    for row in rows:
+        by_exp.setdefault(str(row.get("experiment_id", "experiment")), []).append(row)
+    for exp_id, part in by_exp.items():
+        fig, ax = plt.subplots(figsize=(8.2, 4.8))
+        has_line = False
+        for row in part:
+            metrics_path = row.get("metrics_path")
+            if not metrics_path:
+                continue
+            path = Path(metrics_path)
+            if not path.exists():
+                continue
+            metrics = json.loads(path.read_text(encoding="utf-8"))
+            rounds = metrics.get("rounds", [])
+            acc = metrics.get("acc_on_g_test_data", [])
+            if not rounds or not acc:
+                continue
+            label = f"{row.get('method')} a={row.get('dirichlet_alpha')} E={row.get('local_epoch')}"
+            ax.plot(rounds, [float(v) * 100.0 for v in acc], linewidth=1.8, label=label)
+            has_line = True
+        if has_line:
+            ax.set_title(f"{exp_id}: accuracy curves")
+            ax.set_xlabel("Round")
+            ax.set_ylabel("Test accuracy (%)")
+            ax.grid(True, linestyle="--", alpha=0.35)
+            ax.legend(frameon=False, fontsize=8)
+            fig.tight_layout()
+            fig.savefig(output_dir / f"{exp_id}_curves.png", dpi=300)
+            fig.savefig(output_dir / f"{exp_id}_curves.pdf")
+        plt.close(fig)
+
+
 def plot_diagnostics(diagnostic_rows, output_dir):
+    if not diagnostic_rows:
+        return
+
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -276,6 +405,8 @@ def main():
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip-groups", default="dp_noise")
+    parser.add_argument("--max-workers", type=int, default=1,
+                        help="Maximum number of training runs to execute concurrently.")
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir).resolve()
@@ -310,54 +441,30 @@ def main():
         })
 
     try:
-        status("running", "", f"Starting {len(specs)} runs")
-        for index, spec in enumerate(specs, start=1):
-            run_id = spec["run_id"]
-            run_dir = runs_root / run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-            write_json(run_dir / "run_meta.json", spec)
-            write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "running", "index": index, "total": len(specs)})
-            status("running", run_id, f"Running {index}/{len(specs)}")
-            env = os.environ.copy()
-            env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-            env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
-            start = time.time()
-            with (run_dir / "stdout.log").open("w", encoding="utf-8") as out, (run_dir / "stderr.log").open("w", encoding="utf-8") as err:
-                proc = subprocess.run(
-                    [args.python, "-u", "main.py", *spec["arguments"]],
-                    cwd=str(project_dir),
-                    stdout=out,
-                    stderr=err,
-                    env=env,
-                )
-            duration = round((time.time() - start) / 60.0, 2)
-            if proc.returncode != 0:
-                write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "failed", "exit_code": proc.returncode})
-                raise RuntimeError(f"{run_id} failed with exit code {proc.returncode}")
-            metrics_path = find_metrics(project_dir, run_id)
-            if metrics_path is None:
-                raise RuntimeError(f"metrics not found for {run_id}")
-            metrics = parse_metrics(metrics_path)
-            row = {
-                "run_id": run_id,
-                "experiment_id": spec["experiment_id"],
-                "group": spec["group"],
-                "method": spec["method"],
-                "plugin_name": spec["plugin_name"],
-                "status": "succeeded",
-                "duration_min": duration,
-                "dirichlet_alpha": spec["options"].get("dirichlet_alpha"),
-                "local_epoch": spec["options"].get("local_epoch"),
-                "batch_size": spec["options"].get("batch_size"),
-                "distill_rounds": spec["options"].get("fedfed_distill_rounds", 0),
-                "shared_buffer_size": spec["options"].get("fedfed_shared_buffer_size", 0),
-                "shared_per_class_size": spec["options"].get("fedfed_shared_per_class_size", 0),
-                **metrics,
-            }
-            rows.append(row)
-            write_json(summary_path, rows)
-            write_csv(summary_csv, rows)
-            write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "succeeded", "duration_min": duration, "metrics_path": str(metrics_path)})
+        max_workers = max(int(args.max_workers), 1)
+        status("running", "", f"Starting {len(specs)} runs with max_workers={max_workers}")
+        indexed_specs = [(index, spec) for index, spec in enumerate(specs, start=1)]
+        if max_workers == 1:
+            for index, spec in indexed_specs:
+                status("running", spec["run_id"], f"Running {index}/{len(specs)}")
+                row = run_training_spec(args, project_dir, runs_root, spec, index, len(specs))
+                rows.append(row)
+                write_json(summary_path, rows)
+                write_csv(summary_csv, rows)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_spec = {
+                    executor.submit(run_training_spec, args, project_dir, runs_root, spec, index, len(specs)): (index, spec)
+                    for index, spec in indexed_specs
+                }
+                status("running", "", f"Running up to {max_workers}/{len(specs)} concurrently")
+                for future in concurrent.futures.as_completed(future_to_spec):
+                    index, spec = future_to_spec[future]
+                    row = future.result()
+                    rows.append(row)
+                    write_json(summary_path, rows)
+                    write_csv(summary_csv, rows)
+                    status("running", spec["run_id"], f"Completed {len(rows)}/{len(specs)}")
         for index, spec in enumerate(diagnostics, start=1):
             run_id = spec["run_id"]
             run_dir = runs_root / run_id

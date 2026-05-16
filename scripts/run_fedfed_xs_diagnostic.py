@@ -26,6 +26,16 @@ from src.utils.tools import (
 )
 
 
+def clip_sensitive_feature(xs, options):
+    clip_norm = float(options.get('fedfed_clip_norm', 0.0) or 0.0)
+    if clip_norm <= 0.0:
+        return xs
+    flat = xs.flatten(1)
+    norms = flat.norm(p=2, dim=1, keepdim=True).clamp_min(1e-12)
+    scale = torch.clamp(clip_norm / norms, max=1.0)
+    return (flat * scale).view_as(xs)
+
+
 def add_feature_noise(x, options):
     noise_type = str(options.get('fedfed_noise_type', 'none')).lower()
     if noise_type in {'none', '', 'off'}:
@@ -34,12 +44,13 @@ def add_feature_noise(x, options):
     mean = float(options.get('fedfed_noise_mean', 0.0) or 0.0)
     if std <= 0:
         return x
+    size = x.shape[-3:] if str(options.get('fedfed_noise_shape', 'paper')).lower() == 'paper' and x.dim() >= 3 else x.shape
     if noise_type == 'gaussian':
-        return x + torch.randn_like(x) * std + mean
+        return x + (torch.randn(size, device=x.device, dtype=x.dtype) * std + mean)
     if noise_type == 'laplace':
         dist = torch.distributions.Laplace(
-            torch.full_like(x, mean),
-            torch.full_like(x, std),
+            torch.full(size, mean, device=x.device, dtype=x.dtype),
+            torch.full(size, std, device=x.device, dtype=x.dtype),
         )
         return x + dist.sample()
     return x
@@ -63,7 +74,7 @@ def transform_dataset(data, labels, generator, mode, device, batch_size, limit, 
             z = x
         else:
             xr = generator(x)
-            xs = x - xr
+            xs = clip_sensitive_feature(x - xr, options)
             if mode == 'xs':
                 xs = add_feature_noise(xs, options)
             z = xs if mode == 'xs' else xr

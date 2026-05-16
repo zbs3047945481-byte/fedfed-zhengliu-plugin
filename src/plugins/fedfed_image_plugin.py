@@ -38,6 +38,22 @@ def _train_augment(x, enabled=True):
     return _batch_horizontal_flip(_batch_random_crop(x, padding=4), probability=0.5)
 
 
+def _clip_sensitive_feature(xs, clip_norm):
+    clip_norm = float(clip_norm or 0.0)
+    if clip_norm <= 0.0:
+        return xs
+    flat = xs.flatten(1)
+    norms = flat.norm(p=2, dim=1, keepdim=True).clamp_min(1e-12)
+    scale = torch.clamp(clip_norm / norms, max=1.0)
+    return (flat * scale).view_as(xs)
+
+
+def _paper_noise_size(x):
+    if x.dim() >= 3:
+        return x.shape[-3:]
+    return x.shape
+
+
 def _mixup_data(x, y, alpha):
     if alpha <= 0.0 or x.size(0) < 2:
         return x, y, y, 1.0
@@ -198,7 +214,10 @@ class FedFedImageClientPlugin(BaseClientPlugin):
 
     def _sensitive_feature(self, x):
         robust = self.generator(x)
-        return x - robust
+        return _clip_sensitive_feature(
+            x - robust,
+            self.options.get('fedfed_clip_norm', 0.0),
+        )
 
     def _raw_sensitive_feature(self, x):
         robust = self.generator(x)
@@ -210,14 +229,15 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         mean = float(self.options.get('fedfed_noise_mean', 0.0))
         if noise_type == 'none' or std <= 0.0:
             return x_item.clone()
+        noise_size = _paper_noise_size(x_item) if str(self.options.get('fedfed_noise_shape', 'paper')).lower() == 'paper' else x_item.shape
         if noise_type == 'gaussian':
-            noise = torch.normal(mean=mean, std=std, size=x_item.shape, device=x_item.device)
+            noise = torch.normal(mean=mean, std=std, size=noise_size, device=x_item.device)
         elif noise_type == 'laplace':
             dist = torch.distributions.Laplace(
                 torch.tensor(mean, dtype=x_item.dtype, device=x_item.device),
                 torch.tensor(std, dtype=x_item.dtype, device=x_item.device),
             )
-            noise = dist.sample(x_item.shape)
+            noise = dist.sample(noise_size)
         else:
             raise ValueError('Unsupported fedfed_noise_type: {}'.format(noise_type))
         return x_item.clone() + noise.to(dtype=x_item.dtype)
@@ -244,7 +264,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
         X = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
         xs_raw = self._raw_sensitive_feature(X)
         robust = X - xs_raw
-        xs = xs_raw
+        xs = _clip_sensitive_feature(xs_raw, self.options.get('fedfed_clip_norm', 0.0))
         if bool(self.options.get('fedfed_distill_ce_on_noisy_xs', False)):
             xs1 = self._add_shared_noise(xs, 'fedfed_noise_std1')
             xs2 = self._add_shared_noise(xs, 'fedfed_noise_std2')
@@ -279,6 +299,7 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             'align_loss': loss_align,
             'logit_align_loss': loss_logit_align,
             'xs_norm': xs.flatten(1).norm(p=2, dim=1).mean(),
+            'xs_raw_norm': xs_raw.flatten(1).norm(p=2, dim=1).mean(),
             'kl_loss': kl_loss if kl_loss is not None else xs.new_tensor(0.0),
         }
 
@@ -344,6 +365,9 @@ class FedFedImageClientPlugin(BaseClientPlugin):
             self.upload_counts[class_id] = self.upload_counts.get(class_id, 0) + 1
 
     def train_batch(self, X, y):
+        return self.train_batch_with_hooks(X, y)
+
+    def train_batch_with_hooks(self, X, y, extra_loss_fn=None, before_step=None):
         self.model_optimizer.zero_grad()
         X_train = _train_augment(X, bool(self.options.get('fedfed_use_augmentation', True)))
         shared_x1, shared_x2, shared_y = self._sample_shared_batch(X_train.size(0))
@@ -364,11 +388,14 @@ class FedFedImageClientPlugin(BaseClientPlugin):
                 pred_mixed = self.model(mixed_x)
                 loss = F.cross_entropy(pred_mixed, mixed_y)
                 pred_local = pred_mixed[:X_train.size(0)]
-            loss.backward()
         else:
             pred_local = self.model(X_train)
             loss = F.cross_entropy(pred_local, y)
-            loss.backward()
+        if extra_loss_fn is not None:
+            loss = loss + extra_loss_fn()
+        loss.backward()
+        if before_step is not None:
+            before_step()
         self.model_optimizer.step()
         return pred_local, loss.detach()
 
@@ -472,6 +499,8 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         payload = {'round_index': self.current_round}
         if self.generator_state is not None:
             payload['generator_state'] = self.generator_state
+        if bool(self.options.get('fedfed_disable_shared_training', False)):
+            return payload
         shared_x1, shared_x2, shared_y = self._flatten_shared_buffer()
         if shared_y:
             shared_x1_tensor = torch.stack(shared_x1, dim=0)
@@ -569,6 +598,10 @@ class FedFedImageServerPlugin(BaseServerPlugin):
             ys = aux['sensitive_y'].detach().cpu().long()
             for x_item, y_item in zip(xs, ys):
                 class_id = int(y_item.item())
+                x_item = _clip_sensitive_feature(
+                    x_item.unsqueeze(0),
+                    self.options.get('fedfed_clip_norm', 0.0),
+                ).squeeze(0)
                 bucket = self.shared_by_class.setdefault(class_id, [])
                 bucket.append((
                     self._add_shared_noise(x_item, 'fedfed_noise_std1'),
@@ -585,14 +618,15 @@ class FedFedImageServerPlugin(BaseServerPlugin):
         mean = float(self.options.get('fedfed_noise_mean', 0.0))
         if noise_type == 'none' or std <= 0.0:
             return x_item.clone()
+        noise_size = _paper_noise_size(x_item) if str(self.options.get('fedfed_noise_shape', 'paper')).lower() == 'paper' else x_item.shape
         if noise_type == 'gaussian':
-            noise = torch.normal(mean=mean, std=std, size=x_item.shape, device=x_item.device)
+            noise = torch.normal(mean=mean, std=std, size=noise_size, device=x_item.device)
         elif noise_type == 'laplace':
             dist = torch.distributions.Laplace(
                 torch.tensor(mean, dtype=x_item.dtype, device=x_item.device),
                 torch.tensor(std, dtype=x_item.dtype, device=x_item.device),
             )
-            noise = dist.sample(x_item.shape)
+            noise = dist.sample(noise_size)
         else:
             raise ValueError('Unsupported fedfed_noise_type: {}'.format(noise_type))
         return x_item.clone() + noise.to(dtype=x_item.dtype)

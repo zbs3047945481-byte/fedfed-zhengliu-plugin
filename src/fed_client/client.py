@@ -22,6 +22,11 @@ class BaseClient():
         self.model.to(self.storage_device)
         self.plugin = build_client_plugin(options, self.model, self.storage_device)
         self.plugin_payload = None
+        self.fedprox_mu = 0.0
+        self.fedprox_global_params = None
+        self.scaffold_server_controls = None
+        self.scaffold_client_controls = None
+        self.scaffold_global_params = None
 
     def set_plugin_payload(self, payload):
         self.plugin_payload = payload
@@ -33,6 +38,39 @@ class BaseClient():
     def set_learning_rate(self, learning_rate):
         for group in self.optimizer.param_groups:
             group['lr'] = learning_rate
+
+    def configure_fedprox(self, global_params, mu):
+        self.fedprox_mu = float(mu)
+        self.fedprox_global_params = {
+            key: value.detach().to(self.device)
+            for key, value in global_params.items()
+            if value.is_floating_point()
+        } if self.fedprox_mu > 0.0 else None
+
+    def clear_fedprox(self):
+        self.fedprox_mu = 0.0
+        self.fedprox_global_params = None
+
+    def configure_scaffold(self, global_params, server_controls):
+        if self.scaffold_client_controls is None:
+            self.scaffold_client_controls = {
+                key: torch.zeros_like(value.detach().cpu())
+                for key, value in global_params.items()
+                if value.is_floating_point()
+            }
+        self.scaffold_global_params = {
+            key: value.detach().cpu().clone()
+            for key, value in global_params.items()
+            if value.is_floating_point()
+        }
+        self.scaffold_server_controls = {
+            key: value.detach().to(self.device)
+            for key, value in server_controls.items()
+        }
+
+    def clear_scaffold(self):
+        self.scaffold_server_controls = None
+        self.scaffold_global_params = None
 
     def get_model_parameters(self):
         state_dict = self.model.state_dict()
@@ -54,14 +92,20 @@ class BaseClient():
         begin_time = time.time()
         self._move_to_training_device()
         try:
-            local_model_paras, return_dict, aux = self.local_update(self.local_dataset, self.options, )
+            local_model_paras, return_dict, aux, algorithm_aux = self.local_update(self.local_dataset, self.options, )
         finally:
             self._move_to_storage_device()
         end_time = time.time()
         stats = {'id': self.id, "time": round(end_time - begin_time, 2)}
         stats.update(return_dict)
         # Update structure: weights (FedAvg) + num_samples + optional aux (FedFed)
-        update = {"weights": local_model_paras, "num_samples": len(self.local_dataset), "aux": aux}
+        update = {
+            "weights": local_model_paras,
+            "num_samples": len(self.local_dataset),
+            "num_steps": return_dict.get("num_steps", 0),
+            "aux": aux,
+            "algorithm_aux": algorithm_aux,
+        }
         return update, stats
 
     def plugin_feature_distill(self, payload):
@@ -174,20 +218,31 @@ class BaseClient():
         self.model.train() #把模型设置为训练模式
         if use_plugin:
             self.plugin.on_round_start(self.optimizer.param_groups[0]['lr'], self.plugin_payload)#正式训练前，先把插件状态准备好。
-        train_loss = train_acc = train_total = 0
+        train_loss = train_acc = train_total = num_steps = 0
         for epoch in range(options['local_epoch']):  #表示这个客户端会把自己的本地数据完整训练 local_epoch 遍。
             for X, y in localTrainDataLoader:
                 if self.gpu:
                     X = X.to(self.device, non_blocking=pin_memory)
                     y = y.to(self.device, non_blocking=pin_memory)
                 if use_plugin:
-                    pred, loss = self.plugin.train_batch(X, y)
+                    if hasattr(self.plugin, 'train_batch_with_hooks'):
+                        pred, loss = self.plugin.train_batch_with_hooks(
+                            X,
+                            y,
+                            extra_loss_fn=self._fedprox_loss,
+                            before_step=self._apply_scaffold_gradient_correction,
+                        )
+                    else:
+                        pred, loss = self.plugin.train_batch(X, y)
                 else:
                     self.optimizer.zero_grad()
                     pred = self.model(X)
                     loss = criterion(pred, y)
+                    loss = loss + self._fedprox_loss()
                     loss.backward()
+                    self._apply_scaffold_gradient_correction()
                     self.optimizer.step()
+                num_steps += 1
                 _, predicted = torch.max(pred, 1) #从预测 logits 中取每个样本得分最高的类别，作为预测标签。
                 correct = predicted.eq(y).sum().item() #统计当前 batch 中预测正确的样本数。
                 target_size = y.size(0) #得到当前 batch 的样本数量。
@@ -195,11 +250,61 @@ class BaseClient():
                 train_acc += correct
                 train_total += target_size
         local_model_paras = self.get_model_parameters_cpu() #训练结束后，把上传权重固定到CPU，避免客户端模型常驻GPU。
+        algorithm_aux = self._build_scaffold_upload(local_model_paras, num_steps)
         return_dict = {"id": self.id,
                        "loss": train_loss / train_total,
-                       "acc": train_acc / train_total}
+                       "acc": train_acc / train_total,
+                       "num_steps": num_steps}
         aux = self.plugin.build_upload_payload() if use_plugin else None
-        return local_model_paras, return_dict, aux
+        return local_model_paras, return_dict, aux, algorithm_aux
+
+    def _fedprox_loss(self):
+        if self.fedprox_mu <= 0.0 or self.fedprox_global_params is None:
+            return torch.zeros((), device=self.device)
+        prox = torch.zeros((), device=self.device)
+        for name, parameter in self.model.named_parameters():
+            if not parameter.requires_grad or name not in self.fedprox_global_params:
+                continue
+            prox = prox + torch.sum((parameter - self.fedprox_global_params[name]) ** 2)
+        return 0.5 * self.fedprox_mu * prox
+
+    def _apply_scaffold_gradient_correction(self):
+        if self.scaffold_server_controls is None or self.scaffold_client_controls is None:
+            return
+        for name, parameter in self.model.named_parameters():
+            if parameter.grad is None or name not in self.scaffold_server_controls:
+                continue
+            server_control = self.scaffold_server_controls[name].to(parameter.grad.device)
+            client_control = self.scaffold_client_controls[name].to(parameter.grad.device)
+            parameter.grad.add_(server_control - client_control)
+        grad_clip = float(self.options.get('scaffold_grad_clip', 0.0) or 0.0)
+        if grad_clip > 0.0:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+
+    def _build_scaffold_upload(self, local_model_paras, num_steps):
+        if (
+            self.scaffold_server_controls is None
+            or self.scaffold_client_controls is None
+            or self.scaffold_global_params is None
+            or num_steps <= 0
+        ):
+            return None
+        lr = float(self.optimizer.param_groups[0]['lr'])
+        denom = max(num_steps * lr, 1e-12)
+        delta_controls = {}
+        for name, global_value in self.scaffold_global_params.items():
+            if name not in local_model_paras:
+                continue
+            old_client = self.scaffold_client_controls[name]
+            server_control = self.scaffold_server_controls[name].detach().cpu()
+            local_value = local_model_paras[name].detach().cpu()
+            new_client = old_client - server_control + (global_value - local_value) / denom
+            control_clip = float(self.options.get('scaffold_control_clip', 0.0) or 0.0)
+            if control_clip > 0.0:
+                new_client = torch.clamp(new_client, -control_clip, control_clip)
+            delta_controls[name] = new_client - old_client
+            self.scaffold_client_controls[name] = new_client
+        return {"control_delta": delta_controls, "num_steps": num_steps}
 
     def _move_to_training_device(self):
         self.model.to(self.device)

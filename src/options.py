@@ -68,6 +68,23 @@ def input_options():
                         help='Number of evaluated rounds without meaningful improvement before stopping.')
     parser.add_argument('--early_stop_min_delta', type=float, default=0.0,
                         help='Minimum absolute accuracy improvement required to reset early-stop patience.')
+    parser.add_argument('--fed_algorithm', type=str, default='fedavg',
+                        choices=['fedavg', 'fedprox', 'scaffold', 'fedavgm', 'fednova'],
+                        help='Federated optimization backbone.')
+    parser.add_argument('--fedprox_mu', type=float, default=0.01,
+                        help='FedProx proximal regularization strength.')
+    parser.add_argument('--fedavgm_momentum', type=float, default=0.9,
+                        help='Server momentum factor for FedAvgM.')
+    parser.add_argument('--fedavgm_server_lr', type=float, default=1.0,
+                        help='Server learning rate for FedAvgM global momentum updates.')
+    parser.add_argument('--fednova_server_momentum', type=float, default=0.0,
+                        help='Optional server momentum factor for FedNova. 0 disables server momentum.')
+    parser.add_argument('--fednova_server_lr', type=float, default=1.0,
+                        help='Server learning rate for FedNova global updates.')
+    parser.add_argument('--scaffold_control_clip', type=float, default=0.0,
+                        help='Clamp SCAFFOLD control variates elementwise. 0 disables clipping.')
+    parser.add_argument('--scaffold_grad_clip', type=float, default=0.0,
+                        help='Clip SCAFFOLD-corrected classifier gradients by global norm. 0 disables clipping.')
 
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, \
                         use value from origin paper as default")
@@ -195,17 +212,42 @@ def input_options():
                         help='Device used to keep the full shared sensitive dataset inside each selected client.')
     parser.add_argument('--fedfed_collapse_duplicate_shared_no_noise', type=str2bool, default=False,
                         help='When noise is disabled, train on one shared view with doubled shared loss weight instead of two duplicate views.')
+    parser.add_argument('--fedfed_disable_shared_training', type=str2bool, default=False,
+                        help='Keep FedFed distillation and shared-buffer collection, but do not broadcast shared features during main federated training.')
     parser.add_argument('--fedfed_noise_type', type=str, default='gaussian',
                         choices=['gaussian', 'laplace', 'none'],
                         help='Noise distribution used to build the two shared sensitive feature views.')
+    parser.add_argument('--fedfed_noise_shape', type=str, default='paper',
+                        choices=['paper', 'elementwise'],
+                        help='paper samples one CxHxW noise tensor and broadcasts it across a batch; elementwise samples independent noise for every tensor element.')
     parser.add_argument('--fedfed_noise_mean', type=float, default=0.0,
                         help='Mean/location of FedFed shared sensitive feature noise.')
     parser.add_argument('--fedfed_noise_std1', type=float, default=0.2,
                         help='Noise std/scale for the first shared sensitive feature view.')
     parser.add_argument('--fedfed_noise_std2', type=float, default=0.25,
                         help='Noise std/scale for the second shared sensitive feature view.')
+    parser.add_argument('--fedfed_clip_norm', type=float, default=0.0,
+                        help='Per-sample L2 clipping bound for x_s before noisy sharing. 0 disables clipping.')
     parser.add_argument('--fedfed_num_classes', type=int, default=10,
                         help='Number of dataset classes.')
+    parser.add_argument('--privacy_mia_samples', type=int, default=1000,
+                        help='Target member/non-member samples used to evaluate membership inference.')
+    parser.add_argument('--privacy_mia_epochs', type=int, default=30,
+                        help='Epochs used to train the MIA attack classifier.')
+    parser.add_argument('--privacy_shadow_models', type=int, default=3,
+                        help='Number of shadow models used by the shadow MIA probe.')
+    parser.add_argument('--privacy_shadow_train_samples', type=int, default=500,
+                        help='Member samples used to train each shadow model.')
+    parser.add_argument('--privacy_shadow_test_samples', type=int, default=500,
+                        help='Non-member samples queried for each shadow model.')
+    parser.add_argument('--privacy_shadow_epochs', type=int, default=0,
+                        help='Training epochs per shadow model. 0 uses diagnostic_epochs.')
+    parser.add_argument('--privacy_inversion_train_samples', type=int, default=10000,
+                        help='Training samples used by the feature inversion probe.')
+    parser.add_argument('--privacy_inversion_test_samples', type=int, default=512,
+                        help='Test samples used by the feature inversion probe.')
+    parser.add_argument('--privacy_inversion_epochs', type=int, default=8,
+                        help='Epochs used by the feature inversion probe.')
     parser.add_argument('--diagnostic_epochs', type=int, default=10,
                         help='Epochs per classifier in x/x_s/x_r diagnostic evaluation.')
     parser.add_argument('--diagnostic_train_limit', type=int, default=20000,

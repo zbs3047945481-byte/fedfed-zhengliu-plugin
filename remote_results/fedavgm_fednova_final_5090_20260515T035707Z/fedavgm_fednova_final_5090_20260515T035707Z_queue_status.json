@@ -1,0 +1,12 @@
+{
+  "prefix": "fedavgm_fednova_final_5090_20260515T035707Z",
+  "status": "succeeded",
+  "current_run": "",
+  "message": "Suite finished",
+  "updated_utc": "2026-05-15T07:21:03Z",
+  "summary_json": "/root/runs/fedavgm_fednova_final_5090_20260515T035707Z_summary.json",
+  "summary_csv": "/root/runs/fedavgm_fednova_final_5090_20260515T035707Z_summary.csv",
+  "figures_dir": "/root/runs/fedavgm_fednova_final_5090_20260515T035707Z_figures",
+  "num_runs": 4,
+  "num_diagnostics": 0
+}

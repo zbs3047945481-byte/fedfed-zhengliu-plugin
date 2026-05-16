@@ -1,0 +1,121 @@
+{
+  "suite_name": "fedavgm_fednova_5090_compare",
+  "description": "FedAvgM/FedNova backbone comparison with and without the FedFed image plugin under the main alpha=0.1, E=1 CIFAR-10 setting. Server-optimizer baselines use plain local SGD momentum=0 for numerical stability and algorithmic consistency.",
+  "common_args": {
+    "round_num": 300,
+    "num_of_clients": 10,
+    "c_fraction": 0.5,
+    "local_epoch": 1,
+    "batch_size": 64,
+    "dataloader_num_workers": 8,
+    "dataloader_pin_memory": true,
+    "torch_cudnn_benchmark": true,
+    "client_empty_cache": false,
+    "gpu": true,
+    "dataset_name": "cifar10",
+    "model_name": "cifar_resnet18",
+    "partition_strategy": "dirichlet",
+    "dirichlet_alpha": 0.1,
+    "min_samples_per_client": 1,
+    "enable_quantity_skew": true,
+    "enable_feature_skew": false,
+    "optimizer_name": "sgd",
+    "lr": 0.01,
+    "weight_decay": 0.0001,
+    "momentum": 0.9,
+    "nesterov": false,
+    "lr_schedule": "none",
+    "early_stop_enable": true,
+    "early_stop_min_rounds": 120,
+    "early_stop_patience": 35,
+    "early_stop_min_delta": 0.0008
+  },
+  "fedfed_args": {
+    "fedfed_two_stage": true,
+    "fedfed_generator_type": "paper_beta_vae",
+    "fedfed_vae_latent_channels": 32,
+    "fedfed_vae_z_dim": 2048,
+    "fedfed_distill_rounds": 15,
+    "fedfed_distill_local_epoch": 1,
+    "fedfed_distill_optimizer": "adamw",
+    "fedfed_distill_lr": 0.001,
+    "fedfed_distill_weight_decay": 0.000001,
+    "fedfed_lambda_recon": 0.2,
+    "fedfed_lambda_fd": 1.5,
+    "fedfed_beta_kl": 0.005,
+    "fedfed_lambda_x_ce": 0.4,
+    "fedfed_use_augmentation": true,
+    "fedfed_mixup_alpha": 2.0,
+    "fedfed_mosaic_batch_size": 64,
+    "fedfed_upload_per_class": 0,
+    "fedfed_upload_per_client": 0,
+    "fedfed_shared_buffer_size": 0,
+    "fedfed_shared_per_class_size": 0,
+    "fedfed_shared_batch_size": 0,
+    "fedfed_shared_cpu_float16": false,
+    "fedfed_shared_resident_device": "cuda",
+    "fedfed_collapse_duplicate_shared_no_noise": true,
+    "fedfed_noise_type": "none",
+    "fedfed_noise_mean": 0.0,
+    "fedfed_noise_std1": 0.0,
+    "fedfed_noise_std2": 0.0,
+    "fedfed_lambda_align": 0.0,
+    "fedfed_lambda_logit_align": 0.5,
+    "fedfed_logit_align_temperature": 2.0,
+    "fedfed_distill_ce_on_noisy_xs": false
+  },
+  "experiments": [
+    {
+      "id": "fedavgm_a0p1_e1",
+      "group": "baseline_plugin",
+      "runs": [
+        {
+          "method": "FedAvgM",
+          "plugin_name": "none",
+          "overrides": {
+            "fed_algorithm": "fedavgm",
+            "fedavgm_momentum": 0.9,
+            "fedavgm_server_lr": 0.5,
+            "momentum": 0.0
+          }
+        },
+        {
+          "method": "FedAvgMFedFedPlugin",
+          "plugin_name": "fedfed_image",
+          "overrides": {
+            "fed_algorithm": "fedavgm",
+            "fedavgm_momentum": 0.9,
+            "fedavgm_server_lr": 0.5,
+            "momentum": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "id": "fednova_a0p1_e1",
+      "group": "baseline_plugin",
+      "runs": [
+        {
+          "method": "FedNova",
+          "plugin_name": "none",
+          "overrides": {
+            "fed_algorithm": "fednova",
+            "fednova_server_momentum": 0.0,
+            "fednova_server_lr": 1.0,
+            "momentum": 0.0
+          }
+        },
+        {
+          "method": "FedNovaFedFedPlugin",
+          "plugin_name": "fedfed_image",
+          "overrides": {
+            "fed_algorithm": "fednova",
+            "fednova_server_momentum": 0.0,
+            "fednova_server_lr": 1.0,
+            "momentum": 0.0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "prefix": "scaffold_retry_5090_20260515T001430Z",
+  "status": "failed",
+  "current_run": "",
+  "message": "No module named 'pandas'",
+  "updated_utc": "2026-05-15T03:13:16Z",
+  "summary_json": "/root/runs/scaffold_retry_5090_20260515T001430Z_summary.json",
+  "summary_csv": "/root/runs/scaffold_retry_5090_20260515T001430Z_summary.csv",
+  "figures_dir": "/root/runs/scaffold_retry_5090_20260515T001430Z_figures",
+  "num_runs": 2,
+  "num_diagnostics": 0
+}
