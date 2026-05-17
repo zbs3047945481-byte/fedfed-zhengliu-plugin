@@ -34,6 +34,7 @@ def expand_runs(suite, prefix, skip_groups):
         for grid_item in grid:
             for run in exp.get("runs", []):
                 args = dict(suite["common_args"])
+                args.update(exp.get("overrides", {}))
                 args.update(grid_item)
                 args["plugin_name"] = run["plugin_name"]
                 if run["plugin_name"] == "fedfed_image":
@@ -110,8 +111,8 @@ def write_csv_with_keys(path, rows, keys=None):
         writer.writerows(rows)
 
 
-def find_metrics(project_dir, run_id):
-    root = project_dir / "result" / "cifar10"
+def find_metrics(project_dir, run_id, dataset_name):
+    root = project_dir / "result" / str(dataset_name)
     if not root.exists():
         return None
     candidates = sorted(root.glob(f"*{run_id}*/metrics.json"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -140,7 +141,7 @@ def run_training_spec(args, project_dir, runs_root, spec, index, total):
     if proc.returncode != 0:
         write_json(run_dir / "run_status.json", {"run_id": run_id, "status": "failed", "exit_code": proc.returncode})
         raise RuntimeError(f"{run_id} failed with exit code {proc.returncode}")
-    metrics_path = find_metrics(project_dir, run_id)
+    metrics_path = find_metrics(project_dir, run_id, spec["options"].get("dataset_name", "cifar10"))
     if metrics_path is None:
         raise RuntimeError(f"metrics not found for {run_id}")
     metrics = parse_metrics(metrics_path)
@@ -155,6 +156,9 @@ def run_training_spec(args, project_dir, runs_root, spec, index, total):
         "dirichlet_alpha": spec["options"].get("dirichlet_alpha"),
         "local_epoch": spec["options"].get("local_epoch"),
         "batch_size": spec["options"].get("batch_size"),
+        "dataset_name": spec["options"].get("dataset_name"),
+        "image_size": spec["options"].get("image_size"),
+        "num_classes": spec["options"].get("num_classes"),
         "distill_rounds": spec["options"].get("fedfed_distill_rounds", 0),
         "shared_buffer_size": spec["options"].get("fedfed_shared_buffer_size", 0),
         "shared_per_class_size": spec["options"].get("fedfed_shared_per_class_size", 0),
@@ -274,6 +278,40 @@ def plot_results(summary_rows, output_dir):
             fig.savefig(output_dir / f"{exp_id}_curves.pdf")
             plt.close(fig)
 
+    # Cross-domain summary when a suite spans multiple datasets.
+    if "dataset_name" in df.columns and df["dataset_name"].nunique() > 1:
+        cross_df = df.copy()
+        cross_df["best_acc_pct"] = cross_df["best_acc"].astype(float) * 100.0
+        cross_df["final_acc_pct"] = cross_df["final_acc"].astype(float) * 100.0
+        for metric, ylabel, filename in [
+            ("best_acc_pct", "Best accuracy (%)", "cross_domain_best_acc_by_dataset"),
+            ("final_acc_pct", "Final accuracy (%)", "cross_domain_final_acc_by_dataset"),
+        ]:
+            fig, ax = plt.subplots(figsize=(7.4, 4.6))
+            sns.barplot(data=cross_df, x="dataset_name", y=metric, hue="method", ax=ax)
+            ax.set_title(ylabel.replace(" (%)", " by dataset"))
+            ax.set_xlabel("")
+            ax.set_ylabel(ylabel)
+            ax.legend(frameon=False, title="")
+            fig.tight_layout()
+            fig.savefig(output_dir / f"{filename}.png", dpi=300)
+            fig.savefig(output_dir / f"{filename}.pdf")
+            plt.close(fig)
+        pivot = cross_df.pivot_table(index="dataset_name", columns="method", values="best_acc", aggfunc="max")
+        if {"FedAvg", "FedFedPlugin"}.issubset(set(pivot.columns)):
+            gain = ((pivot["FedFedPlugin"] - pivot["FedAvg"]) * 100.0).reset_index(name="gain_pp")
+            gain.to_csv(output_dir / "cross_domain_gain_by_dataset.csv", index=False)
+            fig, ax = plt.subplots(figsize=(6.8, 4.2))
+            sns.barplot(data=gain, x="dataset_name", y="gain_pp", ax=ax, color="#4C78A8")
+            ax.axhline(0.0, color="#444444", linewidth=1.0)
+            ax.set_title("FedFed best-accuracy gain by dataset")
+            ax.set_xlabel("")
+            ax.set_ylabel("Gain over FedAvg (pp)")
+            fig.tight_layout()
+            fig.savefig(output_dir / "cross_domain_gain_by_dataset.png", dpi=300)
+            fig.savefig(output_dir / "cross_domain_gain_by_dataset.pdf")
+            plt.close(fig)
+
 
 def plot_results_basic(summary_rows, output_dir, plt):
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -337,6 +375,59 @@ def plot_results_basic(summary_rows, output_dir, plt):
             fig.savefig(output_dir / f"{exp_id}_curves.png", dpi=300)
             fig.savefig(output_dir / f"{exp_id}_curves.pdf")
         plt.close(fig)
+
+    datasets = sorted({str(row.get("dataset_name")) for row in rows if row.get("dataset_name")})
+    if len(datasets) > 1:
+        methods = sorted({str(row.get("method")) for row in rows if row.get("method")})
+        width = 0.8 / max(len(methods), 1)
+        x = list(range(len(datasets)))
+        for metric, ylabel, filename in [
+            ("best_acc", "Best accuracy (%)", "cross_domain_best_acc_by_dataset"),
+            ("final_acc", "Final accuracy (%)", "cross_domain_final_acc_by_dataset"),
+        ]:
+            fig, ax = plt.subplots(figsize=(7.4, 4.6))
+            for offset, method in enumerate(methods):
+                values = []
+                for dataset in datasets:
+                    matches = [
+                        row for row in rows
+                        if str(row.get("dataset_name")) == dataset and str(row.get("method")) == method
+                    ]
+                    values.append(float(matches[0].get(metric) or 0.0) * 100.0 if matches else 0.0)
+                positions = [v - 0.4 + width / 2 + offset * width for v in x]
+                ax.bar(positions, values, width=width, label=method)
+            ax.set_title(ylabel.replace(" (%)", " by dataset"))
+            ax.set_ylabel(ylabel)
+            ax.set_xticks(x)
+            ax.set_xticklabels(datasets)
+            ax.grid(axis="y", linestyle="--", alpha=0.35)
+            ax.legend(frameon=False, fontsize=8)
+            fig.tight_layout()
+            fig.savefig(output_dir / f"{filename}.png", dpi=300)
+            fig.savefig(output_dir / f"{filename}.pdf")
+            plt.close(fig)
+
+        gain_rows = []
+        for dataset in datasets:
+            fedavg = next((row for row in rows if str(row.get("dataset_name")) == dataset and row.get("method") == "FedAvg"), None)
+            fedfed = next((row for row in rows if str(row.get("dataset_name")) == dataset and row.get("method") == "FedFedPlugin"), None)
+            if fedavg and fedfed:
+                gain_rows.append({
+                    "dataset_name": dataset,
+                    "gain_pp": (float(fedfed.get("best_acc") or 0.0) - float(fedavg.get("best_acc") or 0.0)) * 100.0,
+                })
+        if gain_rows:
+            write_csv_with_keys(output_dir / "cross_domain_gain_by_dataset.csv", gain_rows, ["dataset_name", "gain_pp"])
+            fig, ax = plt.subplots(figsize=(6.8, 4.2))
+            ax.bar([row["dataset_name"] for row in gain_rows], [row["gain_pp"] for row in gain_rows], color="#4C78A8")
+            ax.axhline(0.0, color="#444444", linewidth=1.0)
+            ax.set_title("FedFed best-accuracy gain by dataset")
+            ax.set_ylabel("Gain over FedAvg (pp)")
+            ax.grid(axis="y", linestyle="--", alpha=0.35)
+            fig.tight_layout()
+            fig.savefig(output_dir / "cross_domain_gain_by_dataset.png", dpi=300)
+            fig.savefig(output_dir / "cross_domain_gain_by_dataset.pdf")
+            plt.close(fig)
 
 
 def plot_diagnostics(diagnostic_rows, output_dir):

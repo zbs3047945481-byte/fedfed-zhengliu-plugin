@@ -1,5 +1,6 @@
 #定义并解析联邦学习实验的所有超参数，把它们整理成一个 dict（options），供整个系统使用。
 import argparse
+from getdata import get_dataset_defaults
 
 
 def str2bool(value):
@@ -26,6 +27,20 @@ def input_options():
     parser.add_argument('--dataset_name', type=str, default='mnist', help='name of dataset.')
     #数据集名称 / 数据划分方式标识
     #mnist_dir_0.1 很可能表示：MNIST、Dirichlet α=0.1（Non-IID 程度）
+    parser.add_argument('--data_root', type=str, default='./data',
+                        help='Root directory used to download/read datasets.')
+    parser.add_argument('--image_size', type=int, default=0,
+                        help='Square input image size. 0 means dataset default.')
+    parser.add_argument('--input_channels', type=int, default=0,
+                        help='Input image channels. 0 means dataset default.')
+    parser.add_argument('--num_classes', type=int, default=0,
+                        help='Number of dataset classes. 0 means dataset default.')
+    parser.add_argument('--dataset_split_seed', type=int, default=3001,
+                        help='Seed used for datasets that require a deterministic train/test split.')
+    parser.add_argument('--dataset_train_fraction', type=float, default=0.8,
+                        help='Train fraction used for datasets without an official split.')
+    parser.add_argument('--dataset_cache', type=str2bool, default=True,
+                        help='Cache processed resized datasets under data_root/processed.')
 
     parser.add_argument('--model_name', type=str, default='mnist_cnn', help='the model to train')
     #指定用哪个模型
@@ -149,7 +164,7 @@ def input_options():
     parser.add_argument('--plugin_name', type=str, default='none',
                         choices=['none', 'fedfed_image'],
                         help='Plugin selector. Use none for FedAvg and fedfed_image for FedAvg+FedFed.')
-    parser.add_argument('--fedfed_input_channels', type=int, default=3,
+    parser.add_argument('--fedfed_input_channels', type=int, default=0,
                         help='Input channels used by image-space FedFed generator.')
     parser.add_argument('--fedfed_lambda_fd', type=float, default=2.0,
                         help='Weight of CE(f(x - q(x)), y) for image-space FedFed feature distillation.')
@@ -228,7 +243,7 @@ def input_options():
                         help='Noise std/scale for the second shared sensitive feature view.')
     parser.add_argument('--fedfed_clip_norm', type=float, default=0.0,
                         help='Per-sample L2 clipping bound for x_s before noisy sharing. 0 disables clipping.')
-    parser.add_argument('--fedfed_num_classes', type=int, default=10,
+    parser.add_argument('--fedfed_num_classes', type=int, default=0,
                         help='Number of dataset classes.')
     parser.add_argument('--privacy_mia_samples', type=int, default=1000,
                         help='Target member/non-member samples used to evaluate membership inference.')
@@ -260,9 +275,22 @@ def input_options():
     
     options = args.__dict__
     #把参数对象转成字典
+    dataset_defaults = get_dataset_defaults(options['dataset_name'])
+    if int(options.get('image_size') or 0) <= 0:
+        options['image_size'] = int(dataset_defaults.get('image_size', 32))
+    if int(options.get('input_channels') or 0) <= 0:
+        options['input_channels'] = int(dataset_defaults.get('input_channels', 3))
+    if int(options.get('num_classes') or 0) <= 0:
+        options['num_classes'] = int(dataset_defaults.get('num_classes', 10))
+    if int(options.get('fedfed_input_channels') or 0) <= 0:
+        options['fedfed_input_channels'] = int(options['input_channels'])
+    if int(options.get('fedfed_num_classes') or 0) <= 0:
+        options['fedfed_num_classes'] = int(options['num_classes'])
     if options['is_iid']:
         options['partition_strategy'] = 'iid'
     if str(options['dataset_name']).lower() in {'cifar10', 'cifar-10'} and options['model_name'] == 'mnist_cnn':
+        options['model_name'] = 'cifar_resnet18'
+    if str(options['dataset_name']).lower() not in {'mnist'} and options['model_name'] == 'mnist_cnn':
         options['model_name'] = 'cifar_resnet18'
 
     return options

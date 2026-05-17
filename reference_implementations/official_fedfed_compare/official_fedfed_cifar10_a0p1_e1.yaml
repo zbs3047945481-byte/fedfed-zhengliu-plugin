@@ -1,0 +1,49 @@
+dataset: 'cifar10'
+data_dir: '../../data'
+
+client_num_in_total: 10
+client_num_per_round: 5
+comm_round: 300
+global_epochs_per_round: 1
+
+partition_method: 'hetero'
+partition_alpha: 0.1
+dirichlet_balance: False
+dirichlet_min_p: null
+
+seed: 3001
+gpu_index: 0
+num_classes: 10
+model: 'resnet18_v2'
+model_input_channels: 3
+model_output_dim: 10
+algorithm: 'FedAvg'
+
+lr: 0.01
+wd: 0.0001
+momentum: 0.9
+nesterov: False
+batch_size: 64
+data_load_num_workers: 8
+
+record_tool: 'none'
+wandb_record: False
+
+VAE: True
+VAE_comm_round: 15
+VAE_client_num_per_round: 10
+VAE_local_epoch: 1
+VAE_batch_size: 64
+VAE_aug_batch_size: 64
+VAE_d: 32
+VAE_z: 2048
+VAE_re: 5.0
+VAE_ce: 2.0
+VAE_kl: 0.005
+VAE_x_ce: 0.4
+VAE_std1: 0.2
+VAE_std2: 0.25
+VAE_mean: 0
+noise_type: 'Gaussian'
+VAE_alpha: 2.0
+VAE_curriculum: True

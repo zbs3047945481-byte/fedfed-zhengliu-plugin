@@ -23,7 +23,12 @@ def main():
     options = resolve_heterogeneity_options(options)
     configure_runtime(options)
     set_random_seed(options["seed"])
-    dataset = GetDataSet(options["dataset_name"])#加载数据集
+    dataset = GetDataSet(options["dataset_name"], options)#加载数据集
+    options["image_size"] = getattr(dataset, "image_size", options["image_size"])
+    options["input_channels"] = getattr(dataset, "input_channels", options["input_channels"])
+    options["num_classes"] = getattr(dataset, "num_classes", options["num_classes"])
+    options["fedfed_input_channels"] = options["input_channels"]
+    options["fedfed_num_classes"] = options["num_classes"]
     #将训练数据分配给多个客户端，返回每个客户端的数据索引列表
     each_client_label_index = get_each_client_data_index(
         dataset.train_label,

@@ -20,6 +20,17 @@
 - 主要联邦流程：`src/fed_server/fedavg.py`、`src/fed_client/client.py`
 - 主要文档：`README.md`、`docs/FEDFED_PLUGIN.md`、`docs/THESIS_EXPERIMENT_PLAN.md`、`docs/THESIS_EXECUTION_CHECKLIST.md`
 
+## 论文写作规范
+
+本仓库中所有与毕业论文写作、改写、扩写、排版、章节生成、图表说明、摘要、实验分析相关的对话，都必须先参考本节。
+
+- 格式模板必须严格遵循：`/Users/zhubingshuo/毕设资料/1.doc`
+- 论文方法与行文风格可参考：`/Users/zhubingshuo/论文合集/NeurIPS-2023-fedfed-feature-distillation-against-data-heterogeneity-in-federated-learning-Paper-Conference.pdf`
+- 写作语言要求：简洁、明了、凝练，删除冗余解释；能用一句话说清楚的，不拆成两句话。
+- 行文质量目标：尽量接近顶刊、顶会论文的表达方式，强调问题定义、方法动机、技术设计和实验结论，避免口语化、宣传化、空泛化表述。
+- 中文论文正文中不要堆砌形容词；每句话都应服务于论证、定义、实验解释或结论。
+- 生成或修改 `.doc` / `.docx` 论文文件时，必须优先保留模板的标题层级、字体、段落、页眉页脚、目录和参考文献格式。
+
 ## 当前已确认的远程执行脚本
 
 本地仓库中已确认的远程执行脚本主要面向“Mac 编辑，远程 Windows GPU 运行”工作流，公共配置来自 `scripts/remote_common.sh`，默认读取 `scripts/remote_windows.env`。

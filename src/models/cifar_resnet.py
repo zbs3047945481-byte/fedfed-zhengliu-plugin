@@ -4,10 +4,10 @@ from torchvision.models import resnet18
 
 
 class CifarResNet18(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, input_channels=3):
         super().__init__()
         self.backbone = resnet18(weights=None, num_classes=num_classes)
-        self.backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.backbone.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.backbone.maxpool = nn.Identity()
 
     def forward(self, inputs, return_feature=False):

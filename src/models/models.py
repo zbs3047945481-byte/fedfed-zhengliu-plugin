@@ -7,6 +7,8 @@ def choose_model(options):
     if model_name == 'mnist_cnn':
         return Mnist_CNN()
     if model_name == 'cifar_resnet18':
-        return CifarResNet18()
+        return CifarResNet18(
+            num_classes=int(options.get('num_classes', 10)),
+            input_channels=int(options.get('input_channels', 3)),
+        )
     raise ValueError('Unsupported model: {}'.format(options['model_name']))
-
